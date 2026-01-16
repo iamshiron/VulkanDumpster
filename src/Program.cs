@@ -22,6 +22,7 @@ public class Program {
     // Builders (for proper disposal)
     private static PhysicalDeviceSelector _physicalDeviceSelector = null!;
     private static LogicalDeviceBuilder _logicalDeviceBuilder = null!;
+    private static SwapchainBuilder _swapchainBuilder = null!;
 
     // Surface extension
     private static KhrSurface _khrSurface = null!;
@@ -29,6 +30,13 @@ public class Program {
     // Queues
     private static Queue _graphicsQueue;
     private static Queue _presentQueue;
+
+    // Swapchain
+    private static SwapchainKHR _swapchain;
+    private static Image[] _swapchainImages = [];
+    private static ImageView[] _swapchainImageViews = [];
+    private static Format _swapchainImageFormat;
+    private static Extent2D _swapchainExtent;
 
     public static unsafe void Main(string[] args) {
         var options = WindowOptions.DefaultVulkan;
@@ -78,6 +86,23 @@ public class Program {
         _presentQueue = _logicalDeviceBuilder.GetPresentQueue();
         PrintLogicalDeviceInfo();
 
+        // Create swapchain
+        _swapchainBuilder = new SwapchainBuilder(
+                _vk, _device, _chosenGPU, _surface, _khrSurface,
+                _physicalDeviceSelector.QueueFamilies)
+            .WithExtent(_window.Size)
+            .WithFormat(Format.B8G8R8A8Srgb)
+            .WithPresentMode(PresentModeKHR.MailboxKhr)
+            .WithImageCount(3);
+        _swapchain = _swapchainBuilder.Build();
+
+        // Cache swapchain properties
+        _swapchainImages = _swapchainBuilder.Images;
+        _swapchainImageViews = _swapchainBuilder.ImageViews;
+        _swapchainImageFormat = _swapchainBuilder.ImageFormat;
+        _swapchainExtent = _swapchainBuilder.Extent;
+        PrintSwapchainInfo();
+
         Console.WriteLine();
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
         Console.WriteLine("  ✓ Vulkan initialized successfully!");
@@ -120,6 +145,7 @@ public class Program {
         // Wait for device to finish before cleanup
         _vk.DeviceWaitIdle(_device);
 
+        _swapchainBuilder.Dispose();
         _logicalDeviceBuilder.Dispose();
         _khrSurface.DestroySurface(_instance, _surface, null);
         _instanceBuilder.Dispose();
@@ -282,6 +308,65 @@ public class Program {
 
         if (queueFamilies.GraphicsFamily == queueFamilies.PresentFamily) {
             Console.WriteLine("    (Graphics and Present share the same queue family)");
+        }
+        Console.WriteLine();
+    }
+
+    private static void PrintSwapchainInfo() {
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.WriteLine("                      SWAPCHAIN INFO");
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+
+        var surfaceCaps = _swapchainBuilder.SurfaceCapabilities;
+
+        Console.WriteLine($"  Swapchain Handle: 0x{_swapchain.Handle:X16}");
+        Console.WriteLine();
+        Console.WriteLine("  Configuration:");
+        Console.WriteLine($"    Extent: {_swapchainExtent.Width} x {_swapchainExtent.Height}");
+        Console.WriteLine($"    Image Format: {_swapchainImageFormat}");
+        Console.WriteLine($"    Image Count: {_swapchainImages.Length}");
+
+        // Find which present mode was chosen
+        var presentModes = _swapchainBuilder.PresentModes;
+        var chosenMode = presentModes.Contains(PresentModeKHR.MailboxKhr)
+            ? PresentModeKHR.MailboxKhr
+            : PresentModeKHR.FifoKhr;
+        Console.WriteLine($"    Present Mode: {SwapchainBuilder.GetPresentModeDescription(chosenMode)}");
+
+        Console.WriteLine();
+        Console.WriteLine("  Surface Capabilities:");
+        Console.WriteLine($"    Min Image Count: {surfaceCaps.MinImageCount}");
+        Console.WriteLine($"    Max Image Count: {(surfaceCaps.MaxImageCount == 0 ? "Unlimited" : surfaceCaps.MaxImageCount)}");
+        Console.WriteLine($"    Current Extent: {surfaceCaps.CurrentExtent.Width} x {surfaceCaps.CurrentExtent.Height}");
+        Console.WriteLine($"    Min Extent: {surfaceCaps.MinImageExtent.Width} x {surfaceCaps.MinImageExtent.Height}");
+        Console.WriteLine($"    Max Extent: {surfaceCaps.MaxImageExtent.Width} x {surfaceCaps.MaxImageExtent.Height}");
+        Console.WriteLine($"    Max Image Array Layers: {surfaceCaps.MaxImageArrayLayers}");
+        Console.WriteLine($"    Supported Transforms: {surfaceCaps.SupportedTransforms}");
+        Console.WriteLine($"    Current Transform: {surfaceCaps.CurrentTransform}");
+        Console.WriteLine($"    Supported Composite Alpha: {surfaceCaps.SupportedCompositeAlpha}");
+        Console.WriteLine($"    Supported Usage Flags: {surfaceCaps.SupportedUsageFlags}");
+
+        Console.WriteLine();
+        Console.WriteLine("  Available Surface Formats:");
+        foreach (var format in _swapchainBuilder.SurfaceFormats.Take(5)) {
+            var marker = format.Format == _swapchainImageFormat ? " ← selected" : "";
+            Console.WriteLine($"    • {format.Format} ({format.ColorSpace}){marker}");
+        }
+        if (_swapchainBuilder.SurfaceFormats.Length > 5)
+            Console.WriteLine($"    ... and {_swapchainBuilder.SurfaceFormats.Length - 5} more");
+
+        Console.WriteLine();
+        Console.WriteLine("  Available Present Modes:");
+        foreach (var mode in _swapchainBuilder.PresentModes) {
+            var marker = mode == chosenMode ? " ← selected" : "";
+            Console.WriteLine($"    • {SwapchainBuilder.GetPresentModeDescription(mode)}{marker}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  Swapchain Images:");
+        for (int i = 0; i < _swapchainImages.Length; i++) {
+            Console.WriteLine($"    Image {i}: Handle 0x{_swapchainImages[i].Handle:X16}");
+            Console.WriteLine($"             View   0x{_swapchainImageViews[i].Handle:X16}");
         }
         Console.WriteLine();
     }
