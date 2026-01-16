@@ -111,6 +111,7 @@ public class Program {
 
         _window.Load += OnLoad;
         _window.Render += Render;
+        _window.Closing += OnClosing;
 
         _window.Run();
 
@@ -142,20 +143,51 @@ public class Program {
     }
 
     private static unsafe void Cleanup() {
-        // Wait for device to finish before cleanup
-        _vk.DeviceWaitIdle(_device);
+        try {
+            // Wait for device to finish all operations before cleanup
+            if (_device.Handle != 0) {
+                _vk.DeviceWaitIdle(_device);
+            }
 
-        _swapchainBuilder.Dispose();
-        _logicalDeviceBuilder.Dispose();
-        _khrSurface.DestroySurface(_instance, _surface, null);
-        _instanceBuilder.Dispose();
-        _window.Dispose();
+            // Destroy resources in reverse order of creation
+            _swapchainBuilder?.Dispose();
+            _swapchain = default;
+            _swapchainImages = [];
+            _swapchainImageViews = [];
+
+            _logicalDeviceBuilder?.Dispose();
+            _device = default;
+            _graphicsQueue = default;
+            _presentQueue = default;
+
+            if (_surface.Handle != 0 && _khrSurface != null) {
+                _khrSurface.DestroySurface(_instance, _surface, null);
+                _surface = default;
+            }
+
+            _instanceBuilder?.Dispose();
+            _instance = default;
+
+            _vk?.Dispose();
+            _vk = null!;
+
+            _window?.Dispose();
+            _window = null!;
+
+            Console.WriteLine("All Vulkan resources cleaned up successfully.");
+        } catch (Exception ex) {
+            Console.Error.WriteLine($"Error during cleanup: {ex.Message}");
+        }
     }
 
     private static void KeyDown(IKeyboard keyboard, Key key, int arg3) {
         if (key == Key.Escape) {
             _window.Close();
         }
+    }
+
+    private static void OnClosing() {
+        // Window is closing - cleanup will happen after Run() returns
     }
 
     private static void Render(double delta) {

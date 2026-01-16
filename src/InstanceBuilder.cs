@@ -23,7 +23,7 @@ public unsafe sealed class InstanceBuilder : IDisposable {
     private readonly List<string> _layers = new();
 
     private Instance _instance;
-    private ExtDebugUtils _debugUtils;
+    private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
 
     private bool _built;
@@ -119,7 +119,9 @@ public unsafe sealed class InstanceBuilder : IDisposable {
         }
 
         if (_enableValidation) {
-            _debugUtils = new ExtDebugUtils(_vk.Context);
+            if (!_vk.TryGetInstanceExtension(_instance, out _debugUtils)) {
+                throw new VulkanException("Failed to get debug utils extension.", Result.ErrorExtensionNotPresent);
+            }
 
             var messengerCi = new DebugUtilsMessengerCreateInfoEXT {
                 SType = StructureType.DebugUtilsMessengerCreateInfoExt,
@@ -134,7 +136,7 @@ public unsafe sealed class InstanceBuilder : IDisposable {
                 PfnUserCallback = (PfnDebugUtilsMessengerCallbackEXT) DebugCallback
             };
 
-            var res = _debugUtils.CreateDebugUtilsMessenger(_instance, &messengerCi, null, out _debugMessenger);
+            var res = _debugUtils!.CreateDebugUtilsMessenger(_instance, &messengerCi, null, out _debugMessenger);
             if (res != Result.Success) {
                 throw new VulkanException("Failed to create debug utils messenger.", res);
             }
@@ -156,8 +158,9 @@ public unsafe sealed class InstanceBuilder : IDisposable {
 
     public void Dispose() {
         if (_built) {
-            if (_enableValidation) {
+            if (_enableValidation && _debugUtils != null && _debugMessenger.Handle != 0) {
                 _debugUtils.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
+                _debugMessenger = default;
             }
 
             if (_instance.Handle != 0) {
