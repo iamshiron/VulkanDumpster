@@ -19,6 +19,7 @@ public unsafe sealed class LogicalDeviceBuilder : IDisposable {
     private readonly Dictionary<uint, List<float>> _queuePriorities = new();
     private PhysicalDeviceFeatures _enabledFeatures;
     private bool _enableAllAvailableFeatures;
+    private bool _enableSynchronization2 = true; // Enable by default for Vulkan 1.3
 
     private Device _device;
     private readonly Dictionary<uint, Queue[]> _queues = new();
@@ -124,6 +125,15 @@ public unsafe sealed class LogicalDeviceBuilder : IDisposable {
     }
 
     /// <summary>
+    /// Enable or disable the synchronization2 feature (Vulkan 1.3).
+    /// Enabled by default for Vulkan 1.3 applications.
+    /// </summary>
+    public LogicalDeviceBuilder EnableSynchronization2(bool enable = true) {
+        _enableSynchronization2 = enable;
+        return this;
+    }
+
+    /// <summary>
     /// Build the logical device.
     /// </summary>
     public Device Build() {
@@ -176,10 +186,27 @@ public unsafe sealed class LogicalDeviceBuilder : IDisposable {
         // Prepare extensions
         var extPtrs = SilkMarshal.StringArrayToPtr(_extensions.ToArray(), NativeStringEncoding.UTF8);
 
+        // Vulkan 1.3 features (synchronization2, etc.)
+        var vulkan13Features = new PhysicalDeviceVulkan13Features {
+            SType = StructureType.PhysicalDeviceVulkan13Features,
+            PNext = null,
+            Synchronization2 = _enableSynchronization2,
+            DynamicRendering = true // Also enable dynamic rendering which is commonly used
+        };
+
+        // Vulkan 1.2 features - enable commonly needed features
+        var vulkan12Features = new PhysicalDeviceVulkan12Features {
+            SType = StructureType.PhysicalDeviceVulkan12Features,
+            PNext = &vulkan13Features,
+            BufferDeviceAddress = true,
+            DescriptorIndexing = true
+        };
+
         // Create device
         fixed (DeviceQueueCreateInfo* pQueueCreateInfos = queueCreateInfos.ToArray()) {
             var createInfo = new DeviceCreateInfo {
                 SType = StructureType.DeviceCreateInfo,
+                PNext = &vulkan12Features, // Chain the feature structures
                 QueueCreateInfoCount = (uint) queueCreateInfos.Count,
                 PQueueCreateInfos = pQueueCreateInfos,
                 EnabledExtensionCount = (uint) _extensions.Count,

@@ -1,4 +1,4 @@
-﻿using Silk.NET.Core;
+using Silk.NET.Core;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -27,9 +27,19 @@ public class Program {
     // Surface extension
     private static KhrSurface _khrSurface = null!;
 
+    // Swapchain extension
+    private static KhrSwapchain _khrSwapchain = null!;
+
     // Queues
     private static Queue _graphicsQueue;
     private static Queue _presentQueue;
+    private static uint _graphicsQueueFamily;
+
+    // Frame data for triple buffering (must match swapchain image count)
+    private const int _frameOverlap = 3;
+    private static FrameData[] _frames = new FrameData[_frameOverlap];
+    private static int _frameNumber;
+    private static double _elapsedTime;
 
     // Swapchain
     private static SwapchainKHR _swapchain;
@@ -81,9 +91,14 @@ public class Program {
             .AddPresentQueue();
         _device = _logicalDeviceBuilder.Build();
 
-        // Get queues
+        // Get queues and store queue family index
         _graphicsQueue = _logicalDeviceBuilder.GetGraphicsQueue();
         _presentQueue = _logicalDeviceBuilder.GetPresentQueue();
+        _graphicsQueueFamily = _physicalDeviceSelector.QueueFamilies.GraphicsFamily!.Value;
+
+        // Get swapchain extension for image acquisition and presentation
+        if (!_vk.TryGetDeviceExtension(_instance, _device, out _khrSwapchain))
+            throw new Exception("Failed to get KHR_swapchain extension.");
         PrintLogicalDeviceInfo();
 
         // Create swapchain
@@ -102,6 +117,13 @@ public class Program {
         _swapchainImageFormat = _swapchainBuilder.ImageFormat;
         _swapchainExtent = _swapchainBuilder.Extent;
         PrintSwapchainInfo();
+
+        // Initialize command structures
+        InitCommands();
+
+        // Initialize synchronization structures
+        InitSyncStructures();
+        PrintCommandsInfo();
 
         Console.WriteLine();
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
@@ -133,6 +155,87 @@ public class Program {
         return supported;
     }
 
+    /// <summary>
+    /// Get the frame data for the current frame (alternates between frames for double buffering).
+    /// </summary>
+    private static ref FrameData GetCurrentFrame() => ref _frames[_frameNumber % _frameOverlap];
+
+    /// <summary>
+    /// Initialize command pools and command buffers for each frame.
+    /// </summary>
+    private static unsafe void InitCommands() {
+        // Create a command pool for commands submitted to the graphics queue.
+        // We want the pool to allow resetting of individual command buffers.
+        var commandPoolInfo = new CommandPoolCreateInfo {
+            SType = StructureType.CommandPoolCreateInfo,
+            PNext = null,
+            Flags = CommandPoolCreateFlags.ResetCommandBufferBit,
+            QueueFamilyIndex = _graphicsQueueFamily
+        };
+
+        for (int i = 0; i < _frameOverlap; i++) {
+            // Create command pool for this frame
+            fixed (CommandPool* pCommandPool = &_frames[i].CommandPool) {
+                if (_vk.CreateCommandPool(_device, &commandPoolInfo, null, pCommandPool) != Result.Success) {
+                    throw new Exception($"Failed to create command pool for frame {i}.");
+                }
+            }
+
+            // Allocate the main command buffer for rendering
+            var cmdAllocInfo = new CommandBufferAllocateInfo {
+                SType = StructureType.CommandBufferAllocateInfo,
+                PNext = null,
+                CommandPool = _frames[i].CommandPool,
+                CommandBufferCount = 1,
+                Level = CommandBufferLevel.Primary
+            };
+
+            fixed (CommandBuffer* pCommandBuffer = &_frames[i].MainCommandBuffer) {
+                if (_vk.AllocateCommandBuffers(_device, &cmdAllocInfo, pCommandBuffer) != Result.Success) {
+                    throw new Exception($"Failed to allocate command buffer for frame {i}.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Initialize synchronization structures (fences and semaphores) for each frame.
+    /// </summary>
+    private static unsafe void InitSyncStructures() {
+        // Create fence with SIGNALED bit so we can wait on it on the first frame
+        var fenceCreateInfo = new FenceCreateInfo {
+            SType = StructureType.FenceCreateInfo,
+            PNext = null,
+            Flags = FenceCreateFlags.SignaledBit
+        };
+
+        var semaphoreCreateInfo = new SemaphoreCreateInfo {
+            SType = StructureType.SemaphoreCreateInfo,
+            PNext = null,
+            Flags = 0
+        };
+
+        for (int i = 0; i < _frameOverlap; i++) {
+            fixed (Fence* pFence = &_frames[i].RenderFence) {
+                if (_vk.CreateFence(_device, &fenceCreateInfo, null, pFence) != Result.Success) {
+                    throw new Exception($"Failed to create render fence for frame {i}.");
+                }
+            }
+
+            fixed (Silk.NET.Vulkan.Semaphore* pSemaphore = &_frames[i].SwapchainSemaphore) {
+                if (_vk.CreateSemaphore(_device, &semaphoreCreateInfo, null, pSemaphore) != Result.Success) {
+                    throw new Exception($"Failed to create swapchain semaphore for frame {i}.");
+                }
+            }
+
+            fixed (Silk.NET.Vulkan.Semaphore* pSemaphore = &_frames[i].RenderSemaphore) {
+                if (_vk.CreateSemaphore(_device, &semaphoreCreateInfo, null, pSemaphore) != Result.Success) {
+                    throw new Exception($"Failed to create render semaphore for frame {i}.");
+                }
+            }
+        }
+    }
+
     private static void OnLoad() {
         Console.WriteLine("Window loaded");
         var inputContext = _window.CreateInput();
@@ -147,6 +250,32 @@ public class Program {
             // Wait for device to finish all operations before cleanup
             if (_device.Handle != 0) {
                 _vk.DeviceWaitIdle(_device);
+            }
+
+            // Destroy per-frame resources
+            for (int i = 0; i < _frameOverlap; i++) {
+                // Destroy command pool (this also frees all command buffers allocated from it)
+                if (_frames[i].CommandPool.Handle != 0) {
+                    _vk.DestroyCommandPool(_device, _frames[i].CommandPool, null);
+                    _frames[i].CommandPool = default;
+                    _frames[i].MainCommandBuffer = default;
+                }
+
+                // Destroy sync objects
+                if (_frames[i].RenderFence.Handle != 0) {
+                    _vk.DestroyFence(_device, _frames[i].RenderFence, null);
+                    _frames[i].RenderFence = default;
+                }
+
+                if (_frames[i].RenderSemaphore.Handle != 0) {
+                    _vk.DestroySemaphore(_device, _frames[i].RenderSemaphore, null);
+                    _frames[i].RenderSemaphore = default;
+                }
+
+                if (_frames[i].SwapchainSemaphore.Handle != 0) {
+                    _vk.DestroySemaphore(_device, _frames[i].SwapchainSemaphore, null);
+                    _frames[i].SwapchainSemaphore = default;
+                }
             }
 
             // Destroy resources in reverse order of creation
@@ -191,6 +320,138 @@ public class Program {
     }
 
     private static void Render(double delta) {
+        _elapsedTime += delta;
+        Draw();
+    }
+
+    /// <summary>
+    /// Main draw function - records and submits rendering commands.
+    /// </summary>
+    private static unsafe void Draw() {
+        // Wait until the GPU has finished rendering the last frame (1 second timeout)
+        var fence = GetCurrentFrame().RenderFence;
+        if (_vk.WaitForFences(_device, 1, &fence, true, 1_000_000_000) != Result.Success) {
+            throw new Exception("Failed to wait for render fence.");
+        }
+
+        // Reset the fence for the next frame
+        if (_vk.ResetFences(_device, 1, &fence) != Result.Success) {
+            throw new Exception("Failed to reset render fence.");
+        }
+
+        // Request image from the swapchain (1 second timeout)
+        uint swapchainImageIndex = 0;
+        var result = _khrSwapchain.AcquireNextImage(
+            _device, _swapchain, 1_000_000_000,
+            GetCurrentFrame().SwapchainSemaphore, default, &swapchainImageIndex);
+
+        if (result != Result.Success && result != Result.SuboptimalKhr) {
+            throw new Exception($"Failed to acquire swapchain image: {result}");
+        }
+
+        // Get command buffer and reset it
+        var cmd = GetCurrentFrame().MainCommandBuffer;
+        if (_vk.ResetCommandBuffer(cmd, 0) != Result.Success) {
+            throw new Exception("Failed to reset command buffer.");
+        }
+
+        // Begin recording command buffer (one-time submit for potential optimization)
+        var cmdBeginInfo = new CommandBufferBeginInfo {
+            SType = StructureType.CommandBufferBeginInfo,
+            PNext = null,
+            Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+            PInheritanceInfo = null
+        };
+
+        if (_vk.BeginCommandBuffer(cmd, &cmdBeginInfo) != Result.Success) {
+            throw new Exception("Failed to begin command buffer.");
+        }
+
+        // Transition swapchain image to writable mode (General layout)
+        ImageUtils.TransitionImage(_vk, cmd, _swapchainImages[swapchainImageIndex],
+            ImageLayout.Undefined, ImageLayout.General);
+
+        // Make a clear color from elapsed time - smooth 2-second cycle regardless of frame rate
+        float flash = MathF.Abs(MathF.Sin((float) _elapsedTime * MathF.PI)); // Full cycle every 2 seconds
+        var clearValue = new ClearColorValue(0.0f, 0.0f, flash, 1.0f);
+
+        var clearRange = ImageUtils.ImageSubresourceRange(ImageAspectFlags.ColorBit);
+
+        // Clear the image
+        _vk.CmdClearColorImage(cmd, _swapchainImages[swapchainImageIndex],
+            ImageLayout.General, &clearValue, 1, &clearRange);
+
+        // Transition swapchain image to presentable mode
+        ImageUtils.TransitionImage(_vk, cmd, _swapchainImages[swapchainImageIndex],
+            ImageLayout.General, ImageLayout.PresentSrcKhr);
+
+        // Finalize the command buffer
+        if (_vk.EndCommandBuffer(cmd) != Result.Success) {
+            throw new Exception("Failed to end command buffer.");
+        }
+
+        // Prepare submission to the queue
+        var cmdInfo = new CommandBufferSubmitInfo {
+            SType = StructureType.CommandBufferSubmitInfo,
+            PNext = null,
+            CommandBuffer = cmd,
+            DeviceMask = 0
+        };
+
+        var waitInfo = new SemaphoreSubmitInfo {
+            SType = StructureType.SemaphoreSubmitInfo,
+            PNext = null,
+            Semaphore = GetCurrentFrame().SwapchainSemaphore,
+            StageMask = PipelineStageFlags2.ColorAttachmentOutputBit,
+            DeviceIndex = 0,
+            Value = 1
+        };
+
+        var signalInfo = new SemaphoreSubmitInfo {
+            SType = StructureType.SemaphoreSubmitInfo,
+            PNext = null,
+            Semaphore = GetCurrentFrame().RenderSemaphore,
+            StageMask = PipelineStageFlags2.AllGraphicsBit,
+            DeviceIndex = 0,
+            Value = 1
+        };
+
+        var submitInfo = new SubmitInfo2 {
+            SType = StructureType.SubmitInfo2,
+            PNext = null,
+            WaitSemaphoreInfoCount = 1,
+            PWaitSemaphoreInfos = &waitInfo,
+            SignalSemaphoreInfoCount = 1,
+            PSignalSemaphoreInfos = &signalInfo,
+            CommandBufferInfoCount = 1,
+            PCommandBufferInfos = &cmdInfo
+        };
+
+        // Submit command buffer to the queue
+        if (_vk.QueueSubmit2(_graphicsQueue, 1, &submitInfo, GetCurrentFrame().RenderFence) != Result.Success) {
+            throw new Exception("Failed to submit command buffer.");
+        }
+
+        // Prepare present
+        var swapchain = _swapchain;
+        var renderSemaphore = GetCurrentFrame().RenderSemaphore;
+        var presentInfo = new PresentInfoKHR {
+            SType = StructureType.PresentInfoKhr,
+            PNext = null,
+            SwapchainCount = 1,
+            PSwapchains = &swapchain,
+            WaitSemaphoreCount = 1,
+            PWaitSemaphores = &renderSemaphore,
+            PImageIndices = &swapchainImageIndex
+        };
+
+        result = _khrSwapchain.QueuePresent(_graphicsQueue, &presentInfo);
+        if (result != Result.Success && result != Result.SuboptimalKhr) {
+            throw new Exception($"Failed to present swapchain image: {result}");
+        }
+
+        // Increase frame counter
+        _frameNumber++;
     }
 
     #region Debug Print Methods
@@ -399,6 +660,26 @@ public class Program {
         for (int i = 0; i < _swapchainImages.Length; i++) {
             Console.WriteLine($"    Image {i}: Handle 0x{_swapchainImages[i].Handle:X16}");
             Console.WriteLine($"             View   0x{_swapchainImageViews[i].Handle:X16}");
+        }
+        Console.WriteLine();
+    }
+
+    private static void PrintCommandsInfo() {
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.WriteLine("                   COMMAND & SYNC STRUCTURES");
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+
+        Console.WriteLine($"  Frame Overlap: {_frameOverlap} frames (triple buffering)");
+        Console.WriteLine($"  Graphics Queue Family: {_graphicsQueueFamily}");
+        Console.WriteLine();
+        Console.WriteLine("  Per-Frame Resources:");
+        for (int i = 0; i < _frameOverlap; i++) {
+            Console.WriteLine($"    Frame {i}:");
+            Console.WriteLine($"      Command Pool:        0x{_frames[i].CommandPool.Handle:X16}");
+            Console.WriteLine($"      Command Buffer:      0x{_frames[i].MainCommandBuffer.Handle:X16}");
+            Console.WriteLine($"      Render Fence:        0x{_frames[i].RenderFence.Handle:X16}");
+            Console.WriteLine($"      Swapchain Semaphore: 0x{_frames[i].SwapchainSemaphore.Handle:X16}");
+            Console.WriteLine($"      Render Semaphore:    0x{_frames[i].RenderSemaphore.Handle:X16}");
         }
         Console.WriteLine();
     }

@@ -27,7 +27,7 @@ public unsafe sealed class SwapchainBuilder : IDisposable {
     private ColorSpaceKHR _desiredColorSpace = ColorSpaceKHR.SpaceSrgbNonlinearKhr;
     private PresentModeKHR _desiredPresentMode = PresentModeKHR.MailboxKhr;
     private uint _desiredImageCount = 3; // Triple buffering
-    private ImageUsageFlags _imageUsage = ImageUsageFlags.ColorAttachmentBit;
+    private ImageUsageFlags _imageUsage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferDstBit;
     private CompositeAlphaFlagsKHR _compositeAlpha = CompositeAlphaFlagsKHR.OpaqueBitKhr;
     private bool _clipped = true;
     private SwapchainKHR _oldSwapchain;
