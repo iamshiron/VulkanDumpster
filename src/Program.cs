@@ -1,9 +1,12 @@
-﻿using Silk.NET.Input;
+﻿using System.Drawing;
+using Silk.NET.Input;
 using Silk.NET.Maths;
+using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
 
 public class Program {
     private static IWindow _window = null!;
+    private static GL _gl = null!;
 
     public static void Main(string[] args) {
         var options = WindowOptions.Default;
@@ -19,7 +22,11 @@ public class Program {
             foreach (var kb in inputContext.Keyboards) {
                 kb.KeyDown += KeyDown;
             }
+
+            _gl = _window.CreateOpenGL();
+            _gl.ClearColor(Color.MediumPurple);
         };
+        _window.Render += Render;
 
         _window.Run();
     }
@@ -28,5 +35,9 @@ public class Program {
         if (key == Key.Escape) {
             _window.Close();
         }
+    }
+
+    private static void Render(double delta) {
+        _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
     }
 }
