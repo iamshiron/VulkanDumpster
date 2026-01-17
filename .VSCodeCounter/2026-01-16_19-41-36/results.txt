@@ -1,0 +1,46 @@
+Date : 2026-01-16 19:41:36
+Directory : e:\dev\VulkanDumpster
+Total : 16 files,  2088 codes, 565 comments, 504 blanks, all 3157 lines
+
+Languages
++----------+------------+------------+------------+------------+------------+
+| language | files      | code       | comment    | blank      | total      |
++----------+------------+------------+------------+------------+------------+
+| C#       |         11 |      2,023 |        556 |        483 |      3,062 |
+| GLSL     |          2 |         24 |          6 |          9 |         39 |
+| Batch    |          1 |         21 |          3 |          7 |         31 |
+| XML      |          2 |         20 |          0 |          5 |         25 |
++----------+------------+------------+------------+------------+------------+
+
+Directories
++-----------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                | files      | code       | comment    | blank      | total      |
++-----------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                   |         16 |      2,088 |        565 |        504 |      3,157 |
+| . (Files)                                           |          2 |         20 |          0 |          5 |         25 |
+| shaders                                             |          3 |         45 |          9 |         16 |         70 |
+| src                                                 |         11 |      2,023 |        556 |        483 |      3,062 |
++-----------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++-----------------------------------------------------+----------+------------+------------+------------+------------+
+| filename                                            | language | code       | comment    | blank      | total      |
++-----------------------------------------------------+----------+------------+------------+------------+------------+
+| e:\dev\VulkanDumpster\VulkanDumpster.csproj         | XML      |         17 |          0 |          4 |         21 |
+| e:\dev\VulkanDumpster\VulkanDumpster.slnx           | XML      |          3 |          0 |          1 |          4 |
+| e:\dev\VulkanDumpster\shaders\colored_triangle.frag | GLSL     |          7 |          3 |          4 |         14 |
+| e:\dev\VulkanDumpster\shaders\colored_triangle.vert | GLSL     |         17 |          3 |          5 |         25 |
+| e:\dev\VulkanDumpster\shaders\compile.bat           | Batch    |         21 |          3 |          7 |         31 |
+| e:\dev\VulkanDumpster\src\Exceptions.cs             | C#       |          7 |          0 |          5 |         12 |
+| e:\dev\VulkanDumpster\src\FrameData.cs              | C#       |          9 |         22 |          7 |         38 |
+| e:\dev\VulkanDumpster\src\ImageUtils.cs             | C#       |         38 |         22 |          6 |         66 |
+| e:\dev\VulkanDumpster\src\InstanceBuilder.cs        | C#       |        133 |         10 |         31 |        174 |
+| e:\dev\VulkanDumpster\src\LogicalDeviceBuilder.cs   | C#       |        298 |         70 |         77 |        445 |
+| e:\dev\VulkanDumpster\src\PhysicalDeviceSelector.cs | C#       |        218 |         57 |         58 |        333 |
+| e:\dev\VulkanDumpster\src\PipelineBuilder.cs        | C#       |        213 |         58 |         39 |        310 |
+| e:\dev\VulkanDumpster\src\Program.cs                | C#       |        629 |         91 |        135 |        855 |
+| e:\dev\VulkanDumpster\src\QueueFamilyUtils.cs       | C#       |        150 |        137 |         52 |        339 |
+| e:\dev\VulkanDumpster\src\ShaderUtils.cs            | C#       |         45 |         20 |         11 |         76 |
+| e:\dev\VulkanDumpster\src\SwapchainBuilder.cs       | C#       |        283 |         69 |         62 |        414 |
+| Total                                               |          |      2,088 |        565 |        504 |      3,157 |
++-----------------------------------------------------+----------+------------+------------+------------+------------+

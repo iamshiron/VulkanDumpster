@@ -11,7 +11,7 @@ namespace Shiron.VulkanDumpster;
 /// <summary>
 /// Utility class for creating and managing a Vulkan swapchain for presenting rendered images.
 /// </summary>
-public unsafe sealed class SwapchainBuilder : IDisposable {
+public sealed unsafe class SwapchainBuilder : IDisposable {
     private readonly Vk _vk;
     private readonly Device _device;
     private readonly PhysicalDevice _physicalDevice;
@@ -157,6 +157,7 @@ public unsafe sealed class SwapchainBuilder : IDisposable {
 
     /// <summary>
     /// Build the swapchain with the specified configuration.
+    /// Chooses format, present mode, extent, and image count based on device capabilities.
     /// </summary>
     public SwapchainKHR Build() {
         if (_built) throw new InvalidOperationException("SwapchainBuilder.Build() can only be called once.");
@@ -199,7 +200,7 @@ public unsafe sealed class SwapchainBuilder : IDisposable {
             OldSwapchain = _oldSwapchain
         };
 
-        // Handle queue family sharing
+        // Handle queue family sharing (concurrent when graphics/present differ).
         var graphicsFamily = _queueFamilyIndices.GraphicsFamily!.Value;
         var presentFamily = _queueFamilyIndices.PresentFamily!.Value;
 

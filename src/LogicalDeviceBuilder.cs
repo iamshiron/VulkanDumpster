@@ -8,9 +8,10 @@ using Silk.NET.Vulkan;
 namespace Shiron.VulkanDumpster;
 
 /// <summary>
-/// Utility class for creating a Vulkan logical device with specified queues and features.
+/// Fluent builder for a Vulkan logical device.
+/// It collects queues, extensions, and feature toggles before calling vkCreateDevice.
 /// </summary>
-public unsafe sealed class LogicalDeviceBuilder : IDisposable {
+public sealed unsafe class LogicalDeviceBuilder : IDisposable {
     private readonly Vk _vk;
     private readonly PhysicalDevice _physicalDevice;
     private readonly QueueFamilyIndices _queueFamilyIndices;
@@ -134,7 +135,7 @@ public unsafe sealed class LogicalDeviceBuilder : IDisposable {
     }
 
     /// <summary>
-    /// Build the logical device.
+    /// Build the logical device and cache the created queues.
     /// </summary>
     public Device Build() {
         if (_built) throw new InvalidOperationException("LogicalDeviceBuilder.Build() can only be called once.");
@@ -289,6 +290,9 @@ public unsafe sealed class LogicalDeviceBuilder : IDisposable {
         return queues[queueIndex];
     }
 
+    /// <summary>
+    /// Destroy the logical device and all child resources.
+    /// </summary>
     public void Dispose() {
         if (_built && _device.Handle != 0) {
             _vk.DestroyDevice(_device, null);
@@ -298,147 +302,229 @@ public unsafe sealed class LogicalDeviceBuilder : IDisposable {
 }
 
 /// <summary>
-/// Helper class for configuring physical device features in a fluent manner.
+/// Fluent helper for toggling <see cref="PhysicalDeviceFeatures"/> flags.
 /// </summary>
 public class FeatureConfigurator {
-    internal PhysicalDeviceFeatures Features;
+    internal PhysicalDeviceFeatures Features => _features;
+    private PhysicalDeviceFeatures _features;
 
     internal FeatureConfigurator(PhysicalDeviceFeatures initial) {
-        Features = initial;
+        _features = initial;
     }
 
+    /// <summary>
+    /// Enable or disable sampler anisotropy.
+    /// </summary>
     public FeatureConfigurator SamplerAnisotropy(bool enable = true) {
-        Features.SamplerAnisotropy = enable;
+        _features.SamplerAnisotropy = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable geometry shader support.
+    /// </summary>
     public FeatureConfigurator GeometryShader(bool enable = true) {
-        Features.GeometryShader = enable;
+        _features.GeometryShader = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable tessellation shader support.
+    /// </summary>
     public FeatureConfigurator TessellationShader(bool enable = true) {
-        Features.TessellationShader = enable;
+        _features.TessellationShader = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable multi-draw indirect commands.
+    /// </summary>
     public FeatureConfigurator MultiDrawIndirect(bool enable = true) {
-        Features.MultiDrawIndirect = enable;
+        _features.MultiDrawIndirect = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable non-solid fill modes (e.g., wireframe).
+    /// </summary>
     public FeatureConfigurator FillModeNonSolid(bool enable = true) {
-        Features.FillModeNonSolid = enable;
+        _features.FillModeNonSolid = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable wide line rendering.
+    /// </summary>
     public FeatureConfigurator WideLines(bool enable = true) {
-        Features.WideLines = enable;
+        _features.WideLines = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable large point rendering.
+    /// </summary>
     public FeatureConfigurator LargePoints(bool enable = true) {
-        Features.LargePoints = enable;
+        _features.LargePoints = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable multiple viewports.
+    /// </summary>
     public FeatureConfigurator MultiViewport(bool enable = true) {
-        Features.MultiViewport = enable;
+        _features.MultiViewport = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable 64-bit floating point shader support.
+    /// </summary>
     public FeatureConfigurator ShaderFloat64(bool enable = true) {
-        Features.ShaderFloat64 = enable;
+        _features.ShaderFloat64 = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable 64-bit integer shader support.
+    /// </summary>
     public FeatureConfigurator ShaderInt64(bool enable = true) {
-        Features.ShaderInt64 = enable;
+        _features.ShaderInt64 = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable 16-bit integer shader support.
+    /// </summary>
     public FeatureConfigurator ShaderInt16(bool enable = true) {
-        Features.ShaderInt16 = enable;
+        _features.ShaderInt16 = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable depth clamp.
+    /// </summary>
     public FeatureConfigurator DepthClamp(bool enable = true) {
-        Features.DepthClamp = enable;
+        _features.DepthClamp = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable depth bias clamp.
+    /// </summary>
     public FeatureConfigurator DepthBiasClamp(bool enable = true) {
-        Features.DepthBiasClamp = enable;
+        _features.DepthBiasClamp = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable depth bounds testing.
+    /// </summary>
     public FeatureConfigurator DepthBounds(bool enable = true) {
-        Features.DepthBounds = enable;
+        _features.DepthBounds = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable alpha-to-one.
+    /// </summary>
     public FeatureConfigurator AlphaToOne(bool enable = true) {
-        Features.AlphaToOne = enable;
+        _features.AlphaToOne = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable dual-source blending.
+    /// </summary>
     public FeatureConfigurator DualSrcBlend(bool enable = true) {
-        Features.DualSrcBlend = enable;
+        _features.DualSrcBlend = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable logic operations for blending.
+    /// </summary>
     public FeatureConfigurator LogicOp(bool enable = true) {
-        Features.LogicOp = enable;
+        _features.LogicOp = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable cube map array textures.
+    /// </summary>
     public FeatureConfigurator ImageCubeArray(bool enable = true) {
-        Features.ImageCubeArray = enable;
+        _features.ImageCubeArray = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable independent blend states per attachment.
+    /// </summary>
     public FeatureConfigurator IndependentBlend(bool enable = true) {
-        Features.IndependentBlend = enable;
+        _features.IndependentBlend = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable robust buffer access.
+    /// </summary>
     public FeatureConfigurator RobustBufferAccess(bool enable = true) {
-        Features.RobustBufferAccess = enable;
+        _features.RobustBufferAccess = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable full 32-bit draw index range.
+    /// </summary>
     public FeatureConfigurator FullDrawIndexUint32(bool enable = true) {
-        Features.FullDrawIndexUint32 = enable;
+        _features.FullDrawIndexUint32 = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable BC texture compression support.
+    /// </summary>
     public FeatureConfigurator TextureCompressionBC(bool enable = true) {
-        Features.TextureCompressionBC = enable;
+        _features.TextureCompressionBC = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable ETC2 texture compression support.
+    /// </summary>
     public FeatureConfigurator TextureCompressionETC2(bool enable = true) {
-        Features.TextureCompressionEtc2 = enable;
+        _features.TextureCompressionEtc2 = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable ASTC LDR texture compression support.
+    /// </summary>
     public FeatureConfigurator TextureCompressionASTC_LDR(bool enable = true) {
-        Features.TextureCompressionAstcLdr = enable;
+        _features.TextureCompressionAstcLdr = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable extended image formats for storage images.
+    /// </summary>
     public FeatureConfigurator ShaderStorageImageExtendedFormats(bool enable = true) {
-        Features.ShaderStorageImageExtendedFormats = enable;
+        _features.ShaderStorageImageExtendedFormats = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable fragment shader stores and atomics.
+    /// </summary>
     public FeatureConfigurator FragmentStoresAndAtomics(bool enable = true) {
-        Features.FragmentStoresAndAtomics = enable;
+        _features.FragmentStoresAndAtomics = enable;
         return this;
     }
 
+    /// <summary>
+    /// Enable or disable vertex pipeline stores and atomics.
+    /// </summary>
     public FeatureConfigurator VertexPipelineStoresAndAtomics(bool enable = true) {
-        Features.VertexPipelineStoresAndAtomics = enable;
+        _features.VertexPipelineStoresAndAtomics = enable;
         return this;
     }
 }

@@ -10,7 +10,7 @@ namespace Shiron.VulkanDumpster;
 /// <summary>
 /// Utility class for selecting a suitable physical device (GPU) based on specified criteria.
 /// </summary>
-public unsafe sealed class PhysicalDeviceSelector {
+public sealed unsafe class PhysicalDeviceSelector {
     private readonly Vk _vk;
     private readonly Instance _instance;
 
@@ -308,11 +308,29 @@ public unsafe sealed class PhysicalDeviceSelector {
 /// Stores the indices of queue families found on a physical device.
 /// </summary>
 public struct QueueFamilyIndices {
+    /// <summary>
+    /// Queue family that supports graphics commands (draw calls, pipeline binding, etc.).
+    /// </summary>
     public uint? GraphicsFamily;
+
+    /// <summary>
+    /// Queue family that supports compute dispatches.
+    /// </summary>
     public uint? ComputeFamily;
+
+    /// <summary>
+    /// Queue family that supports transfer (copy) commands.
+    /// </summary>
     public uint? TransferFamily;
+
+    /// <summary>
+    /// Queue family that can present images to a window surface.
+    /// </summary>
     public uint? PresentFamily;
 
+    /// <summary>
+    /// Returns true if required queues are available for the current app needs.
+    /// </summary>
     public readonly bool IsComplete(bool requirePresent = false) {
         return GraphicsFamily.HasValue &&
                (!requirePresent || PresentFamily.HasValue);

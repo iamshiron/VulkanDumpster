@@ -1,0 +1,13 @@
+"filename", "language", "GLSL", "C#", "Markdown", "comment", "blank", "total"
+"e:\dev\VulkanDumpster\Guide.md", "Markdown", 0, 0, 119, 0, 39, 158
+"e:\dev\VulkanDumpster\shaders\colored_triangle.frag", "GLSL", -1, 0, 0, -1, 0, -2
+"e:\dev\VulkanDumpster\shaders\colored_triangle.vert", "GLSL", -9, 0, 0, -3, -1, -13
+"e:\dev\VulkanDumpster\src\Exceptions.cs", "C#", 0, 0, 0, 3, 0, 3
+"e:\dev\VulkanDumpster\src\InstanceBuilder.cs", "C#", 0, 0, 0, 8, 0, 8
+"e:\dev\VulkanDumpster\src\LogicalDeviceBuilder.cs", "C#", 0, 1, 0, 85, 0, 86
+"e:\dev\VulkanDumpster\src\PhysicalDeviceSelector.cs", "C#", 0, 0, 0, 15, 3, 18
+"e:\dev\VulkanDumpster\src\PipelineBuilder.cs", "C#", 0, 8, 0, -1, 1, 8
+"e:\dev\VulkanDumpster\src\Program.cs", "C#", 0, 114, 0, 43, 26, 183
+"e:\dev\VulkanDumpster\src\SwapchainBuilder.cs", "C#", 0, 0, 0, 1, 0, 1
+"e:\dev\VulkanDumpster\src\Vertex.cs", "C#", 0, 30, 0, 0, 6, 36
+"Total", "-", -10, 153, 119, 150, 74, 486

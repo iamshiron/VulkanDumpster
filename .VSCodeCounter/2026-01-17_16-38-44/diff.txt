@@ -1,0 +1,40 @@
+Date : 2026-01-17 16:38:44
+Directory : e:\dev\VulkanDumpster
+Total : 11 files,  262 codes, 150 comments, 74 blanks, all 486 lines
+
+Languages
++----------+------------+------------+------------+------------+------------+
+| language | files      | code       | comment    | blank      | total      |
++----------+------------+------------+------------+------------+------------+
+| C#       |          8 |        153 |        154 |         36 |        343 |
+| Markdown |          1 |        119 |          0 |         39 |        158 |
+| GLSL     |          2 |        -10 |         -4 |         -1 |        -15 |
++----------+------------+------------+------------+------------+------------+
+
+Directories
++-----------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                | files      | code       | comment    | blank      | total      |
++-----------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                   |         11 |        262 |        150 |         74 |        486 |
+| . (Files)                                           |          1 |        119 |          0 |         39 |        158 |
+| shaders                                             |          2 |        -10 |         -4 |         -1 |        -15 |
+| src                                                 |          8 |        153 |        154 |         36 |        343 |
++-----------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++-----------------------------------------------------+----------+------------+------------+------------+------------+
+| filename                                            | language | code       | comment    | blank      | total      |
++-----------------------------------------------------+----------+------------+------------+------------+------------+
+| e:\dev\VulkanDumpster\Guide.md                      | Markdown |        119 |          0 |         39 |        158 |
+| e:\dev\VulkanDumpster\shaders\colored_triangle.frag | GLSL     |         -1 |         -1 |          0 |         -2 |
+| e:\dev\VulkanDumpster\shaders\colored_triangle.vert | GLSL     |         -9 |         -3 |         -1 |        -13 |
+| e:\dev\VulkanDumpster\src\Exceptions.cs             | C#       |          0 |          3 |          0 |          3 |
+| e:\dev\VulkanDumpster\src\InstanceBuilder.cs        | C#       |          0 |          8 |          0 |          8 |
+| e:\dev\VulkanDumpster\src\LogicalDeviceBuilder.cs   | C#       |          1 |         85 |          0 |         86 |
+| e:\dev\VulkanDumpster\src\PhysicalDeviceSelector.cs | C#       |          0 |         15 |          3 |         18 |
+| e:\dev\VulkanDumpster\src\PipelineBuilder.cs        | C#       |          8 |         -1 |          1 |          8 |
+| e:\dev\VulkanDumpster\src\Program.cs                | C#       |        114 |         43 |         26 |        183 |
+| e:\dev\VulkanDumpster\src\SwapchainBuilder.cs       | C#       |          0 |          1 |          0 |          1 |
+| e:\dev\VulkanDumpster\src\Vertex.cs                 | C#       |         30 |          0 |          6 |         36 |
+| Total                                               |          |        262 |        150 |         74 |        486 |
++-----------------------------------------------------+----------+------------+------------+------------+------------+

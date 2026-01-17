@@ -9,7 +9,11 @@ using Silk.NET.Vulkan.Extensions.EXT;
 
 namespace Shiron.VulkanDumpster;
 
-public unsafe sealed class InstanceBuilder : IDisposable {
+/// <summary>
+/// Fluent builder that creates a Vulkan instance and optional debug messenger.
+/// This is the first Vulkan object every application must create.
+/// </summary>
+public sealed unsafe class InstanceBuilder : IDisposable {
     private readonly Vk _vk;
 
     private string _appName = "App";
@@ -73,7 +77,8 @@ public unsafe sealed class InstanceBuilder : IDisposable {
     }
 
     /// <summary>
-    /// If validation is enabled, also enables VK_EXT_debug_utils and creates a debug messenger. [web:79]
+    /// Build the instance with configured layers/extensions.
+    /// When validation is enabled, also creates a debug messenger.
     /// </summary>
     public Instance Build() {
         if (_built) throw new InvalidOperationException("InstanceBuilder.Build() can only be called once.");
@@ -156,6 +161,9 @@ public unsafe sealed class InstanceBuilder : IDisposable {
         return Vk.False;
     }
 
+    /// <summary>
+    /// Destroy the debug messenger and Vulkan instance.
+    /// </summary>
     public void Dispose() {
         if (_built) {
             if (_enableValidation && _debugUtils != null && _debugMessenger.Handle != 0) {

@@ -1,3 +1,4 @@
+using System.Numerics;
 using Silk.NET.Core;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Input;
@@ -8,7 +9,13 @@ using Silk.NET.Windowing;
 
 namespace Shiron.VulkanDumpster;
 
+/// <summary>
+/// Minimal Vulkan learning app that renders a triangle.
+/// Each method maps to a single Vulkan concept to keep the flow readable.
+/// </summary>
 public class Program {
+    public static Program Instance;
+
     private static IWindow _window = null!;
 
     // Vulkan handles (mapped from C++ types)
@@ -48,17 +55,79 @@ public class Program {
     private static Format _swapchainImageFormat;
     private static Extent2D _swapchainExtent;
 
+    // Triangle pipeline
+    private static PipelineLayout _trianglePipelineLayout;
+    private static Pipeline _trianglePipeline;
+
+    private Silk.NET.Vulkan.Buffer _vertexBuffer;
+    private DeviceMemory _vertexBufferMemory;
+    private Silk.NET.Vulkan.Buffer _indexBuffer;
+    private DeviceMemory _indexBufferMemory;
+
+    private static ushort[] _indices = {
+            0, 1, 2, 2, 3, 0
+    };
+
     public static unsafe void Main(string[] args) {
+        Instance = new();
+        Instance.Run();
+    }
+
+    public void Run() {
+        CreateWindow();
+        InitializeVulkan();
+        HookWindowEvents();
+
+        // Create render data
+        CreateVertexBuffer();
+        CreateIndexBuffer();
+
+        _window.Run();
+        Cleanup();
+    }
+
+    /// <summary>
+    /// Create the window and its Vulkan-compatible surface provider.
+    /// </summary>
+    private static void CreateWindow() {
         var options = WindowOptions.DefaultVulkan;
         options.Title = "Vulkan Dumpster Project";
         options.Size = new Vector2D<int>(1920, 1080);
 
         _window = Window.Create(options);
         _window.Initialize();
+    }
 
+    /// <summary>
+    /// Build the Vulkan instance, device, swapchain, and render pipeline.
+    /// This is the high-level "boot sequence" of the renderer.
+    /// </summary>
+    private static void InitializeVulkan() {
         _vk = Vk.GetApi();
 
-        // Create Vulkan instance with validation layers
+        CreateInstance();
+        CreateSurface();
+        SelectPhysicalDevice();
+        CreateLogicalDevice();
+        CreateSwapchain();
+        InitCommands();
+        InitSyncStructures();
+        InitPipelines();
+
+        PrintCommandsInfo();
+        PrintPipelineInfo();
+
+        Console.WriteLine();
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.WriteLine("  ✓ Vulkan initialized successfully!");
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.WriteLine();
+    }
+
+    /// <summary>
+    /// Create the Vulkan instance and (optionally) a debug messenger.
+    /// </summary>
+    private static void CreateInstance() {
         _instanceBuilder = new InstanceBuilder(_vk)
             .WithApp("VulkanDumpster", new Version32(1, 0, 0))
             .WithEngine("NoEngine", new Version32(1, 0, 0))
@@ -67,15 +136,22 @@ public class Program {
             .EnableValidationLayers(enable: true);
         _instance = _instanceBuilder.Build();
         PrintInstanceInfo();
+    }
 
-        // Create window surface
+    /// <summary>
+    /// Create the window surface and cache the surface extension for presentation checks.
+    /// </summary>
+    private static unsafe void CreateSurface() {
         _surface = _window.VkSurface!.Create<AllocationCallbacks>(_instance.ToHandle(), null).ToSurface();
 
-        // Get surface extension for present support checking
         if (!_vk.TryGetInstanceExtension(_instance, out _khrSurface))
             throw new Exception("Failed to get KHR_surface extension.");
+    }
 
-        // Select physical device (GPU)
+    /// <summary>
+    /// Choose a physical device (GPU) that supports the required queues and extensions.
+    /// </summary>
+    private static void SelectPhysicalDevice() {
         _physicalDeviceSelector = new PhysicalDeviceSelector(_vk, _instance)
             .PreferDeviceType(PhysicalDeviceType.DiscreteGpu)
             .AddRequiredExtensions(KhrSwapchain.ExtensionName)
@@ -83,25 +159,31 @@ public class Program {
             .RequirePresentQueue(_surface, CheckPresentSupport);
         _chosenGPU = _physicalDeviceSelector.Select();
         PrintPhysicalDeviceInfo();
+    }
 
-        // Create logical device
+    /// <summary>
+    /// Create a logical device and retrieve the graphics/present queues we will submit to.
+    /// </summary>
+    private static void CreateLogicalDevice() {
         _logicalDeviceBuilder = new LogicalDeviceBuilder(_vk, _physicalDeviceSelector)
             .AddExtensions(KhrSwapchain.ExtensionName)
             .AddGraphicsQueue()
             .AddPresentQueue();
         _device = _logicalDeviceBuilder.Build();
 
-        // Get queues and store queue family index
         _graphicsQueue = _logicalDeviceBuilder.GetGraphicsQueue();
         _presentQueue = _logicalDeviceBuilder.GetPresentQueue();
         _graphicsQueueFamily = _physicalDeviceSelector.QueueFamilies.GraphicsFamily!.Value;
 
-        // Get swapchain extension for image acquisition and presentation
         if (!_vk.TryGetDeviceExtension(_instance, _device, out _khrSwapchain))
             throw new Exception("Failed to get KHR_swapchain extension.");
         PrintLogicalDeviceInfo();
+    }
 
-        // Create swapchain
+    /// <summary>
+    /// Create a swapchain and cache its images/views so the render loop can access them quickly.
+    /// </summary>
+    private static void CreateSwapchain() {
         _swapchainBuilder = new SwapchainBuilder(
                 _vk, _device, _chosenGPU, _surface, _khrSurface,
                 _physicalDeviceSelector.QueueFamilies)
@@ -111,37 +193,27 @@ public class Program {
             .WithImageCount(3);
         _swapchain = _swapchainBuilder.Build();
 
-        // Cache swapchain properties
         _swapchainImages = _swapchainBuilder.Images;
         _swapchainImageViews = _swapchainBuilder.ImageViews;
         _swapchainImageFormat = _swapchainBuilder.ImageFormat;
         _swapchainExtent = _swapchainBuilder.Extent;
         PrintSwapchainInfo();
+    }
 
-        // Initialize command structures
-        InitCommands();
-
-        // Initialize synchronization structures
-        InitSyncStructures();
-        PrintCommandsInfo();
-
-        Console.WriteLine();
-        Console.WriteLine("═══════════════════════════════════════════════════════════════");
-        Console.WriteLine("  ✓ Vulkan initialized successfully!");
-        Console.WriteLine("═══════════════════════════════════════════════════════════════");
-        Console.WriteLine();
-
+    /// <summary>
+    /// Hook window callbacks for input and per-frame rendering.
+    /// </summary>
+    private void HookWindowEvents() {
         _window.Load += OnLoad;
         _window.Render += Render;
         _window.Closing += OnClosing;
-
-        _window.Run();
-
-        Cleanup();
     }
 
+    /// <summary>
+    /// Query the windowing system for the required instance extensions.
+    /// </summary>
     private static unsafe string[] GetRequiredExtensions() {
-        // Get extensions required by the windowing system
+        // These include platform-specific WSI (window system integration) extensions.
         var windowExtensions = _window.VkSurface!.GetRequiredExtensions(out var count);
         var extensions = new string[count];
         for (var i = 0; i < count; i++) {
@@ -150,13 +222,16 @@ public class Program {
         return extensions;
     }
 
+    /// <summary>
+    /// Check whether a queue family can present to the current window surface.
+    /// </summary>
     private static unsafe bool CheckPresentSupport(PhysicalDevice device, uint queueFamilyIndex) {
         _khrSurface.GetPhysicalDeviceSurfaceSupport(device, queueFamilyIndex, _surface, out var supported);
         return supported;
     }
 
     /// <summary>
-    /// Get the frame data for the current frame (alternates between frames for double buffering).
+    /// Get the frame data for the current frame (rotates through our frame overlap count).
     /// </summary>
     private static ref FrameData GetCurrentFrame() => ref _frames[_frameNumber % _frameOverlap];
 
@@ -236,6 +311,134 @@ public class Program {
         }
     }
 
+    /// <summary>
+    /// Initialize all graphics pipelines.
+    /// </summary>
+    private static void InitPipelines() {
+        InitTrianglePipeline();
+    }
+
+    /// <summary>
+    /// Initialize the triangle rendering pipeline.
+    /// </summary>
+    private static unsafe void InitTrianglePipeline() {
+        // Load shaders
+        if (!ShaderUtils.LoadShaderModule(_vk, _device, "shaders/colored_triangle.vert.spv", out var triangleVertexShader)) {
+            throw new Exception("Failed to load triangle vertex shader.");
+        }
+
+        if (!ShaderUtils.LoadShaderModule(_vk, _device, "shaders/colored_triangle.frag.spv", out var triangleFragShader)) {
+            throw new Exception("Failed to load triangle fragment shader.");
+        }
+
+        // Build the pipeline layout (empty for now - no push constants or descriptor sets)
+        var pipelineLayoutInfo = new PipelineLayoutCreateInfo {
+            SType = StructureType.PipelineLayoutCreateInfo,
+            PNext = null,
+            Flags = 0,
+            SetLayoutCount = 0,
+            PSetLayouts = null,
+            PushConstantRangeCount = 0,
+            PPushConstantRanges = null
+        };
+
+        fixed (PipelineLayout* pPipelineLayout = &_trianglePipelineLayout) {
+            if (_vk.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, pPipelineLayout) != Result.Success) {
+                throw new Exception("Failed to create triangle pipeline layout.");
+            }
+        }
+
+        // Build the pipeline using the PipelineBuilder
+        var pipelineBuilder = new PipelineBuilder(_vk) { PipelineLayout = _trianglePipelineLayout };
+        pipelineBuilder
+            .SetShaders(triangleVertexShader, triangleFragShader)
+            .SetInputTopology(PrimitiveTopology.TriangleList)
+            .SetPolygonMode(PolygonMode.Fill)
+            .SetCullMode(CullModeFlags.None, FrontFace.Clockwise)
+            .SetMultisamplingNone()
+            .DisableBlending()
+            .DisableDepthTest()
+            .SetColorAttachmentFormat(_swapchainImageFormat)
+            .SetDepthFormat(Format.Undefined);
+
+        _trianglePipeline = pipelineBuilder.Build(_device);
+
+        if (_trianglePipeline.Handle == 0) {
+            throw new Exception("Failed to create triangle pipeline.");
+        }
+
+        // Clean up shader modules (they're baked into the pipeline now)
+        _vk.DestroyShaderModule(_device, triangleFragShader, null);
+        _vk.DestroyShaderModule(_device, triangleVertexShader, null);
+    }
+
+    /// <summary>
+    /// Record geometry drawing commands.
+    /// </summary>
+    private unsafe void DrawGeometry(CommandBuffer cmd, ImageView targetImageView, Extent2D extent) {
+        // Begin a render pass connected to our target image
+        var colorAttachment = new RenderingAttachmentInfo {
+            SType = StructureType.RenderingAttachmentInfo,
+            PNext = null,
+            ImageView = targetImageView,
+            ImageLayout = ImageLayout.ColorAttachmentOptimal,
+            LoadOp = AttachmentLoadOp.Load,     // Preserve background
+            StoreOp = AttachmentStoreOp.Store,
+            ClearValue = default
+        };
+
+        var renderInfo = new RenderingInfo {
+            SType = StructureType.RenderingInfo,
+            PNext = null,
+            RenderArea = new Rect2D {
+                Offset = new Offset2D { X = 0, Y = 0 },
+                Extent = extent
+            },
+            LayerCount = 1,
+            ColorAttachmentCount = 1,
+            PColorAttachments = &colorAttachment,
+            PDepthAttachment = null,
+            PStencilAttachment = null
+        };
+
+        _vk.CmdBeginRendering(cmd, &renderInfo);
+
+        // Bind the triangle pipeline
+        _vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, _trianglePipeline);
+        Silk.NET.Vulkan.Buffer[] vertexBuffers = { _vertexBuffer };
+        ulong[] offsets = [0];
+
+        fixed (Silk.NET.Vulkan.Buffer* vertexBuffersPtr = vertexBuffers)
+        fixed (ulong* offsetPtr = offsets) {
+            _vk.CmdBindVertexBuffers(cmd, 0, 1, vertexBuffersPtr, offsetPtr);
+        }
+
+        _vk.CmdBindIndexBuffer(cmd, _indexBuffer, 0, IndexType.Uint16);
+
+        // Set dynamic viewport
+        var viewport = new Viewport {
+            X = 0,
+            Y = 0,
+            Width = extent.Width,
+            Height = extent.Height,
+            MinDepth = 0.0f,
+            MaxDepth = 1.0f
+        };
+        _vk.CmdSetViewport(cmd, 0, 1, &viewport);
+
+        // Set dynamic scissor
+        var scissor = new Rect2D {
+            Offset = new Offset2D { X = 0, Y = 0 },
+            Extent = extent
+        };
+        _vk.CmdSetScissor(cmd, 0, 1, &scissor);
+
+        // Draw 3 vertices (1 triangle) with hardcoded positions in the shader
+        _vk.CmdDrawIndexed(cmd, (uint) _indices.Length, 1, 0, 0, 0);
+
+        _vk.CmdEndRendering(cmd);
+    }
+
     private static void OnLoad() {
         Console.WriteLine("Window loaded");
         var inputContext = _window.CreateInput();
@@ -276,6 +479,17 @@ public class Program {
                     _vk.DestroySemaphore(_device, _frames[i].SwapchainSemaphore, null);
                     _frames[i].SwapchainSemaphore = default;
                 }
+            }
+
+            // Destroy pipelines
+            if (_trianglePipeline.Handle != 0) {
+                _vk.DestroyPipeline(_device, _trianglePipeline, null);
+                _trianglePipeline = default;
+            }
+
+            if (_trianglePipelineLayout.Handle != 0) {
+                _vk.DestroyPipelineLayout(_device, _trianglePipelineLayout, null);
+                _trianglePipelineLayout = default;
             }
 
             // Destroy resources in reverse order of creation
@@ -319,7 +533,10 @@ public class Program {
         // Window is closing - cleanup will happen after Run() returns
     }
 
-    private static void Render(double delta) {
+    /// <summary>
+    /// Per-frame callback from the windowing system.
+    /// </summary>
+    private void Render(double delta) {
         _elapsedTime += delta;
         Draw();
     }
@@ -327,8 +544,8 @@ public class Program {
     /// <summary>
     /// Main draw function - records and submits rendering commands.
     /// </summary>
-    private static unsafe void Draw() {
-        // Wait until the GPU has finished rendering the last frame (1 second timeout)
+    private unsafe void Draw() {
+        // 1) Synchronize with the GPU so we can reuse per-frame resources.
         var fence = GetCurrentFrame().RenderFence;
         if (_vk.WaitForFences(_device, 1, &fence, true, 1_000_000_000) != Result.Success) {
             throw new Exception("Failed to wait for render fence.");
@@ -339,7 +556,7 @@ public class Program {
             throw new Exception("Failed to reset render fence.");
         }
 
-        // Request image from the swapchain (1 second timeout)
+        // 2) Acquire a swapchain image to render into.
         uint swapchainImageIndex = 0;
         var result = _khrSwapchain.AcquireNextImage(
             _device, _swapchain, 1_000_000_000,
@@ -349,7 +566,7 @@ public class Program {
             throw new Exception($"Failed to acquire swapchain image: {result}");
         }
 
-        // Get command buffer and reset it
+        // 3) Record command buffer for this frame.
         var cmd = GetCurrentFrame().MainCommandBuffer;
         if (_vk.ResetCommandBuffer(cmd, 0) != Result.Success) {
             throw new Exception("Failed to reset command buffer.");
@@ -367,7 +584,7 @@ public class Program {
             throw new Exception("Failed to begin command buffer.");
         }
 
-        // Transition swapchain image to writable mode (General layout)
+        // Transition swapchain image to writable mode (General layout) for compute-style background clear
         ImageUtils.TransitionImage(_vk, cmd, _swapchainImages[swapchainImageIndex],
             ImageLayout.Undefined, ImageLayout.General);
 
@@ -377,13 +594,20 @@ public class Program {
 
         var clearRange = ImageUtils.ImageSubresourceRange(ImageAspectFlags.ColorBit);
 
-        // Clear the image
+        // Clear the image (background)
         _vk.CmdClearColorImage(cmd, _swapchainImages[swapchainImageIndex],
             ImageLayout.General, &clearValue, 1, &clearRange);
 
+        // Transition to ColorAttachmentOptimal for geometry rendering
+        ImageUtils.TransitionImage(_vk, cmd, _swapchainImages[swapchainImageIndex],
+            ImageLayout.General, ImageLayout.ColorAttachmentOptimal);
+
+        // Draw geometry (triangle)
+        DrawGeometry(cmd, _swapchainImageViews[swapchainImageIndex], _swapchainExtent);
+
         // Transition swapchain image to presentable mode
         ImageUtils.TransitionImage(_vk, cmd, _swapchainImages[swapchainImageIndex],
-            ImageLayout.General, ImageLayout.PresentSrcKhr);
+            ImageLayout.ColorAttachmentOptimal, ImageLayout.PresentSrcKhr);
 
         // Finalize the command buffer
         if (_vk.EndCommandBuffer(cmd) != Result.Success) {
@@ -427,12 +651,12 @@ public class Program {
             PCommandBufferInfos = &cmdInfo
         };
 
-        // Submit command buffer to the queue
+        // 4) Submit to the graphics queue (GPU executes recorded commands).
         if (_vk.QueueSubmit2(_graphicsQueue, 1, &submitInfo, GetCurrentFrame().RenderFence) != Result.Success) {
             throw new Exception("Failed to submit command buffer.");
         }
 
-        // Prepare present
+        // 5) Present the rendered image to the screen.
         var swapchain = _swapchain;
         var renderSemaphore = GetCurrentFrame().RenderSemaphore;
         var presentInfo = new PresentInfoKHR {
@@ -452,6 +676,110 @@ public class Program {
 
         // Increase frame counter
         _frameNumber++;
+    }
+
+    private uint FindMemoryType(uint typeFilter, MemoryPropertyFlags properties) {
+        _vk.GetPhysicalDeviceMemoryProperties(_chosenGPU, out var memProperties);
+
+        for (int i = 0; i < memProperties.MemoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) != 0 &&
+                (memProperties.MemoryTypes[i].PropertyFlags & properties) == properties) {
+                return (uint) i;
+            }
+        }
+
+        throw new Exception("failed to find suitable memory type!");
+    }
+
+    private unsafe void CreateVertexBuffer() {
+        // 1. Define your triangle data
+        var vertices = new Vertex[] {
+            new(new Vector3(-0.5f, -0.5f, 0.0f), new Vector3(1.0f, 0.0f, 0.0f)),
+            new(new Vector3(0.5f, -0.5f, 0.0f), new Vector3(0.0f, 1.0f, 0.0f)),
+            new(new Vector3(0.5f, 0.5f, 0.0f), new Vector3(0.0f, 0.0f, 1.0f)),
+            new(new Vector3(-0.5f, 0.5f, 0.0f), new Vector3(1.0f, 1.0f, 1.0f))
+        };
+
+        ulong bufferSize = (ulong) (sizeof(Vertex) * vertices.Length);
+
+        // 2. Create the Buffer Object
+        var bufferInfo = new BufferCreateInfo {
+            SType = StructureType.BufferCreateInfo,
+            Size = bufferSize,
+            Usage = BufferUsageFlags.VertexBufferBit,
+            SharingMode = SharingMode.Exclusive
+        };
+
+        var res = _vk.CreateBuffer(_device, ref bufferInfo, null, out _vertexBuffer);
+        if (res != Result.Success) {
+            throw new VulkanException("Could not create buffer!", res);
+        }
+
+        // 3. Get Memory Requirements
+        _vk.GetBufferMemoryRequirements(_device, _vertexBuffer, out var memRequirements);
+
+        // 4. Allocate Memory
+        // Note: We use HostVisible | HostCoherent so we can map it directly from CPU.
+        // In a real engine, you'd use a "Staging Buffer" (CPU -> Staging -> GPU) for better performance.
+        var allocInfo = new MemoryAllocateInfo {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memRequirements.Size,
+            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
+        };
+
+        _vk.AllocateMemory(_device, allocInfo, null, out _vertexBufferMemory);
+
+        // 5. Bind Memory to Buffer
+        _vk.BindBufferMemory(_device, _vertexBuffer, _vertexBufferMemory, 0);
+
+        // 6. Copy Data (Map -> Copy -> Unmap)
+        void* data;
+        _vk.MapMemory(_device, _vertexBufferMemory, 0, bufferSize, 0, &data);
+        vertices.AsSpan().CopyTo(new Span<Vertex>(data, vertices.Length));
+        _vk.UnmapMemory(_device, _vertexBufferMemory);
+    }
+
+    private unsafe void CreateIndexBuffer() {
+        // 1. Define your triangle data
+        ulong bufferSize = (ulong) (sizeof(ushort) * _indices.Length);
+
+        // 2. Create the Buffer Object
+        var bufferInfo = new BufferCreateInfo {
+            SType = StructureType.BufferCreateInfo,
+            Size = bufferSize,
+            Usage = BufferUsageFlags.IndexBufferBit,
+            SharingMode = SharingMode.Exclusive
+        };
+
+        var res = _vk.CreateBuffer(_device, ref bufferInfo, null, out _indexBuffer);
+        if (res != Result.Success) {
+            throw new VulkanException("Could not create buffer!", res);
+        }
+
+        // 3. Get Memory Requirements
+        _vk.GetBufferMemoryRequirements(_device, _indexBuffer, out var memRequirements);
+
+        // 4. Allocate Memory
+        // Note: We use HostVisible | HostCoherent so we can map it directly from CPU.
+        // In a real engine, you'd use a "Staging Buffer" (CPU -> Staging -> GPU) for better performance.
+        var allocInfo = new MemoryAllocateInfo {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memRequirements.Size,
+            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
+        };
+
+        _vk.AllocateMemory(_device, allocInfo, null, out _indexBufferMemory);
+
+        // 5. Bind Memory to Buffer
+        _vk.BindBufferMemory(_device, _indexBuffer, _indexBufferMemory, 0);
+
+        // 6. Copy Data (Map -> Copy -> Unmap)
+        void* data;
+        _vk.MapMemory(_device, _indexBufferMemory, 0, bufferSize, 0, &data);
+        _indices.AsSpan().CopyTo(new Span<ushort>(data, _indices.Length));
+        _vk.UnmapMemory(_device, _indexBufferMemory);
     }
 
     #region Debug Print Methods
@@ -681,6 +1009,27 @@ public class Program {
             Console.WriteLine($"      Swapchain Semaphore: 0x{_frames[i].SwapchainSemaphore.Handle:X16}");
             Console.WriteLine($"      Render Semaphore:    0x{_frames[i].RenderSemaphore.Handle:X16}");
         }
+        Console.WriteLine();
+    }
+
+    private static void PrintPipelineInfo() {
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+        Console.WriteLine("                      GRAPHICS PIPELINES");
+        Console.WriteLine("═══════════════════════════════════════════════════════════════");
+
+        Console.WriteLine("  Triangle Pipeline:");
+        Console.WriteLine($"    Pipeline Handle: 0x{_trianglePipeline.Handle:X16}");
+        Console.WriteLine($"    Layout Handle:   0x{_trianglePipelineLayout.Handle:X16}");
+        Console.WriteLine("    Configuration:");
+        Console.WriteLine("      • Topology: Triangle List");
+        Console.WriteLine("      • Polygon Mode: Fill");
+        Console.WriteLine("      • Cull Mode: None");
+        Console.WriteLine("      • Depth Test: Disabled");
+        Console.WriteLine("      • Blending: Disabled");
+        Console.WriteLine($"      • Color Format: {_swapchainImageFormat}");
+        Console.WriteLine("    Shaders:");
+        Console.WriteLine("      • Vertex: colored_triangle.vert (hardcoded positions)");
+        Console.WriteLine("      • Fragment: colored_triangle.frag (vertex colors)");
         Console.WriteLine();
     }
 
