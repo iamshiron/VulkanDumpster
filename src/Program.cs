@@ -1,4 +1,5 @@
-using System.Numerics;
+﻿using System.Numerics;
+using System.Runtime.CompilerServices;
 using Silk.NET.Core;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Input;
@@ -59,10 +60,19 @@ public class Program {
     private static PipelineLayout _trianglePipelineLayout;
     private static Pipeline _trianglePipeline;
 
-    private Silk.NET.Vulkan.Buffer _vertexBuffer;
-    private DeviceMemory _vertexBufferMemory;
-    private Silk.NET.Vulkan.Buffer _indexBuffer;
-    private DeviceMemory _indexBufferMemory;
+    private static DescriptorSetLayout _descriptorSetLayout;
+    private static DescriptorPool _descriptorPool;
+
+    private struct UniformBufferObject {
+        public Matrix4X4<float> Model;
+        public Matrix4X4<float> View;
+        public Matrix4X4<float> Proj;
+    }
+
+    private static Silk.NET.Vulkan.Buffer _vertexBuffer;
+    private static DeviceMemory _vertexBufferMemory;
+    private static Silk.NET.Vulkan.Buffer _indexBuffer;
+    private static DeviceMemory _indexBufferMemory;
 
     private static ushort[] _indices = {
             0, 1, 2, 2, 3, 0
@@ -112,6 +122,10 @@ public class Program {
         CreateSwapchain();
         InitCommands();
         InitSyncStructures();
+        CreateDescriptorSetLayout();
+        CreateUniformBuffers();
+        CreateDescriptorPool();
+        CreateDescriptorSets();
         InitPipelines();
 
         PrintCommandsInfo();
@@ -312,6 +326,154 @@ public class Program {
     }
 
     /// <summary>
+    /// Create the descriptor set layout that specifies how the uniform buffer is bound.
+    /// </summary>
+    private static unsafe void CreateDescriptorSetLayout() {
+        var uboLayoutBinding = new DescriptorSetLayoutBinding {
+            Binding = 0,
+            DescriptorCount = 1,
+            DescriptorType = DescriptorType.UniformBuffer,
+            PImmutableSamplers = null,
+            StageFlags = ShaderStageFlags.VertexBit
+        };
+
+        var layoutInfo = new DescriptorSetLayoutCreateInfo {
+            SType = StructureType.DescriptorSetLayoutCreateInfo,
+            BindingCount = 1,
+            PBindings = &uboLayoutBinding
+        };
+
+        fixed (DescriptorSetLayout* pLayout = &_descriptorSetLayout) {
+            if (_vk.CreateDescriptorSetLayout(_device, &layoutInfo, null, pLayout) != Result.Success) {
+                throw new Exception("Failed to create descriptor set layout!");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Create uniform buffers for each frame and map their memory.
+    /// </summary>
+    private static unsafe void CreateUniformBuffers() {
+        var bufferSize = (ulong)sizeof(UniformBufferObject);
+
+        for (int i = 0; i < _frameOverlap; i++) {
+            var bufferInfo = new BufferCreateInfo {
+                SType = StructureType.BufferCreateInfo,
+                Size = bufferSize,
+                Usage = BufferUsageFlags.UniformBufferBit,
+                SharingMode = SharingMode.Exclusive
+            };
+
+            if (_vk.CreateBuffer(_device, &bufferInfo, null, out _frames[i].UniformBuffer) != Result.Success) {
+                throw new Exception("failed to create uniform buffer!");
+            }
+
+            _vk.GetBufferMemoryRequirements(_device, _frames[i].UniformBuffer, out var memRequirements);
+
+            var allocInfo = new MemoryAllocateInfo {
+                SType = StructureType.MemoryAllocateInfo,
+                AllocationSize = memRequirements.Size,
+                MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
+            };
+
+            if (_vk.AllocateMemory(_device, &allocInfo, null, out _frames[i].UniformBufferMemory) != Result.Success) {
+                throw new Exception("failed to allocate uniform buffer memory!");
+            }
+
+            _vk.BindBufferMemory(_device, _frames[i].UniformBuffer, _frames[i].UniformBufferMemory, 0);
+
+            void* mappedData;
+            _vk.MapMemory(_device, _frames[i].UniformBufferMemory, 0, bufferSize, 0, &mappedData);
+            _frames[i].UniformBufferMapped = mappedData;
+        }
+    }
+
+    /// <summary>
+    /// Create a descriptor pool to allocate descriptor sets from.
+    /// </summary>
+    private static unsafe void CreateDescriptorPool() {
+        var poolSize = new DescriptorPoolSize {
+            Type = DescriptorType.UniformBuffer,
+            DescriptorCount = (uint)_frameOverlap
+        };
+
+        var poolInfo = new DescriptorPoolCreateInfo {
+            SType = StructureType.DescriptorPoolCreateInfo,
+            PoolSizeCount = 1,
+            PPoolSizes = &poolSize,
+            MaxSets = (uint)_frameOverlap
+        };
+
+        fixed (DescriptorPool* pDescriptorPool = &_descriptorPool) {
+            if (_vk.CreateDescriptorPool(_device, &poolInfo, null, pDescriptorPool) != Result.Success) {
+                throw new Exception("failed to create descriptor pool!");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Allocate and update descriptor sets for each frame.
+    /// </summary>
+    private static unsafe void CreateDescriptorSets() {
+        var layouts = new DescriptorSetLayout[_frameOverlap];
+        Array.Fill(layouts, _descriptorSetLayout);
+
+        fixed (DescriptorSetLayout* pLayouts = layouts) {
+            var allocInfo = new DescriptorSetAllocateInfo {
+                SType = StructureType.DescriptorSetAllocateInfo,
+                DescriptorPool = _descriptorPool,
+                DescriptorSetCount = (uint)_frameOverlap,
+                PSetLayouts = pLayouts
+            };
+
+            var sets = new DescriptorSet[_frameOverlap];
+            fixed (DescriptorSet* pSets = sets) {
+                if (_vk.AllocateDescriptorSets(_device, &allocInfo, pSets) != Result.Success) {
+                    throw new Exception("failed to allocate descriptor sets!");
+                }
+            }
+
+            for (int i = 0; i < _frameOverlap; i++) {
+                _frames[i].DescriptorSet = sets[i];
+
+                var bufferInfo = new DescriptorBufferInfo {
+                    Buffer = _frames[i].UniformBuffer,
+                    Offset = 0,
+                    Range = (ulong)sizeof(UniformBufferObject)
+                };
+
+                var descriptorWrite = new WriteDescriptorSet {
+                    SType = StructureType.WriteDescriptorSet,
+                    DstSet = _frames[i].DescriptorSet,
+                    DstBinding = 0,
+                    DstArrayElement = 0,
+                    DescriptorType = DescriptorType.UniformBuffer,
+                    DescriptorCount = 1,
+                    PBufferInfo = &bufferInfo
+                };
+
+                _vk.UpdateDescriptorSets(_device, 1, &descriptorWrite, 0, null);
+            }
+        }
+    }
+
+    private static unsafe void UpdateUniformBuffer(int currentFrame, Extent2D extent) {
+        var time = (float)_elapsedTime;
+
+        var ubo = new UniformBufferObject {
+            Model = Matrix4X4.CreateRotationZ(time * 90.0f * (MathF.PI / 180.0f)),
+            View = Matrix4X4.CreateLookAt(new Vector3D<float>(2.0f, 2.0f, 2.0f), new Vector3D<float>(0.0f, 0.0f, 0.0f), new Vector3D<float>(0.0f, 0.0f, 1.0f)),
+            Proj = Matrix4X4.CreatePerspectiveFieldOfView(45.0f * (MathF.PI / 180.0f), extent.Width / (float)extent.Height, 0.1f, 10.0f)
+        };
+        
+        // Vulkan clip space has inverted Y and half Z.
+        ubo.Proj.M22 *= -1;
+
+        // Copy
+        Unsafe.Copy(_frames[currentFrame].UniformBufferMapped, ref ubo);
+    }
+
+    /// <summary>
     /// Initialize all graphics pipelines.
     /// </summary>
     private static void InitPipelines() {
@@ -331,18 +493,19 @@ public class Program {
             throw new Exception("Failed to load triangle fragment shader.");
         }
 
-        // Build the pipeline layout (empty for now - no push constants or descriptor sets)
-        var pipelineLayoutInfo = new PipelineLayoutCreateInfo {
-            SType = StructureType.PipelineLayoutCreateInfo,
-            PNext = null,
-            Flags = 0,
-            SetLayoutCount = 0,
-            PSetLayouts = null,
-            PushConstantRangeCount = 0,
-            PPushConstantRanges = null
-        };
-
+        // Build the pipeline layout
+        fixed (DescriptorSetLayout* pDescriptorSetLayout = &_descriptorSetLayout)
         fixed (PipelineLayout* pPipelineLayout = &_trianglePipelineLayout) {
+            var pipelineLayoutInfo = new PipelineLayoutCreateInfo {
+                SType = StructureType.PipelineLayoutCreateInfo,
+                PNext = null,
+                Flags = 0,
+                SetLayoutCount = 1,
+                PSetLayouts = pDescriptorSetLayout,
+                PushConstantRangeCount = 0,
+                PPushConstantRanges = null
+            };
+            
             if (_vk.CreatePipelineLayout(_device, &pipelineLayoutInfo, null, pPipelineLayout) != Result.Success) {
                 throw new Exception("Failed to create triangle pipeline layout.");
             }
@@ -405,6 +568,10 @@ public class Program {
 
         // Bind the triangle pipeline
         _vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, _trianglePipeline);
+
+        var descriptorSet = GetCurrentFrame().DescriptorSet;
+        _vk.CmdBindDescriptorSets(cmd, PipelineBindPoint.Graphics, _trianglePipelineLayout, 0, 1, &descriptorSet, 0, null);
+
         Silk.NET.Vulkan.Buffer[] vertexBuffers = { _vertexBuffer };
         ulong[] offsets = [0];
 
@@ -464,6 +631,16 @@ public class Program {
                     _frames[i].MainCommandBuffer = default;
                 }
 
+                // Destroy UBO
+                if (_frames[i].UniformBuffer.Handle != 0) {
+                    _vk.DestroyBuffer(_device, _frames[i].UniformBuffer, null);
+                    _frames[i].UniformBuffer = default;
+                }
+                if (_frames[i].UniformBufferMemory.Handle != 0) {
+                    _vk.FreeMemory(_device, _frames[i].UniformBufferMemory, null);
+                    _frames[i].UniformBufferMemory = default;
+                }
+
                 // Destroy sync objects
                 if (_frames[i].RenderFence.Handle != 0) {
                     _vk.DestroyFence(_device, _frames[i].RenderFence, null);
@@ -481,6 +658,24 @@ public class Program {
                 }
             }
 
+            if (_vertexBuffer.Handle != 0) {
+                _vk.DestroyBuffer(_device, _vertexBuffer, null);
+                _vertexBuffer = default;
+            }
+            if (_vertexBufferMemory.Handle != 0) {
+                _vk.FreeMemory(_device, _vertexBufferMemory, null);
+                _vertexBufferMemory = default;
+            }
+
+            if (_indexBuffer.Handle != 0) {
+                _vk.DestroyBuffer(_device, _indexBuffer, null);
+                _indexBuffer = default;
+            }
+            if (_indexBufferMemory.Handle != 0) {
+                _vk.FreeMemory(_device, _indexBufferMemory, null);
+                _indexBufferMemory = default;
+            }
+
             // Destroy pipelines
             if (_trianglePipeline.Handle != 0) {
                 _vk.DestroyPipeline(_device, _trianglePipeline, null);
@@ -490,6 +685,16 @@ public class Program {
             if (_trianglePipelineLayout.Handle != 0) {
                 _vk.DestroyPipelineLayout(_device, _trianglePipelineLayout, null);
                 _trianglePipelineLayout = default;
+            }
+
+            if (_descriptorPool.Handle != 0) {
+                _vk.DestroyDescriptorPool(_device, _descriptorPool, null);
+                _descriptorPool = default;
+            }
+
+            if (_descriptorSetLayout.Handle != 0) {
+                _vk.DestroyDescriptorSetLayout(_device, _descriptorSetLayout, null);
+                _descriptorSetLayout = default;
             }
 
             // Destroy resources in reverse order of creation
@@ -555,6 +760,8 @@ public class Program {
         if (_vk.ResetFences(_device, 1, &fence) != Result.Success) {
             throw new Exception("Failed to reset render fence.");
         }
+
+        UpdateUniformBuffer(_frameNumber % _frameOverlap, _swapchainExtent);
 
         // 2) Acquire a swapchain image to render into.
         uint swapchainImageIndex = 0;
@@ -678,7 +885,7 @@ public class Program {
         _frameNumber++;
     }
 
-    private uint FindMemoryType(uint typeFilter, MemoryPropertyFlags properties) {
+    private static uint FindMemoryType(uint typeFilter, MemoryPropertyFlags properties) {
         _vk.GetPhysicalDeviceMemoryProperties(_chosenGPU, out var memProperties);
 
         for (int i = 0; i < memProperties.MemoryTypeCount; i++) {
@@ -728,7 +935,7 @@ public class Program {
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
         };
 
-        _vk.AllocateMemory(_device, allocInfo, null, out _vertexBufferMemory);
+        _vk.AllocateMemory(_device, ref allocInfo, null, out _vertexBufferMemory);
 
         // 5. Bind Memory to Buffer
         _vk.BindBufferMemory(_device, _vertexBuffer, _vertexBufferMemory, 0);
@@ -770,7 +977,7 @@ public class Program {
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit)
         };
 
-        _vk.AllocateMemory(_device, allocInfo, null, out _indexBufferMemory);
+        _vk.AllocateMemory(_device, ref allocInfo, null, out _indexBufferMemory);
 
         // 5. Bind Memory to Buffer
         _vk.BindBufferMemory(_device, _indexBuffer, _indexBufferMemory, 0);

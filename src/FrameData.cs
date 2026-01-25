@@ -34,4 +34,10 @@ public struct FrameData {
     /// Used to synchronize CPU with GPU for this frame's resources.
     /// </summary>
     public Fence RenderFence;
+
+    // UBO resources
+    public Silk.NET.Vulkan.Buffer UniformBuffer;
+    public DeviceMemory UniformBufferMemory;
+    public unsafe void* UniformBufferMapped;
+    public DescriptorSet DescriptorSet;
 }
