@@ -394,21 +394,7 @@ public sealed unsafe class SwapchainBuilder : IDisposable {
     }
 
     public void Dispose() {
-        if (_built) {
-            // Destroy image views
-            foreach (var imageView in _swapchainImageViews) {
-                if (imageView.Handle != 0)
-                    _vk.DestroyImageView(_device, imageView, null);
-            }
-            _swapchainImageViews = [];
-
-            // Destroy swapchain
-            if (_swapchain.Handle != 0) {
-                _khrSwapchain.DestroySwapchain(_device, _swapchain, null);
-                _swapchain = default;
-            }
-
-            _swapchainImages = [];
-        }
+        // Builder no longer owns the swapchain lifecycle after Build() is called.
+        // Cleanup of intermediate resources if any would go here.
     }
 }

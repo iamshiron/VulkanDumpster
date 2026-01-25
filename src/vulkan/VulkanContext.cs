@@ -53,6 +53,7 @@ public unsafe class VulkanContext : IDisposable {
         _instanceBuilder.AddExtensions(extensions);
 
         Instance = _instanceBuilder.Build();
+        Vk.CurrentInstance = Instance;
     }
 
     private void InitSurface() {

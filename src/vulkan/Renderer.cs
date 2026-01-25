@@ -41,8 +41,7 @@ public unsafe class Renderer : IDisposable {
         _window = window;
         _window.Resize += OnResize;
 
-        CreateSwapchain();
-        CreateDepthResources();
+        RecreateSwapchain();
         CreateFrameResources();
     }
 
@@ -50,8 +49,27 @@ public unsafe class Renderer : IDisposable {
         _resized = true;
     }
 
-    public void CreateSwapchain() {
-        _swapchainBuilder = new SwapchainBuilder(
+    public void RecreateSwapchain() {
+        if (_window.Size.X == 0 || _window.Size.Y == 0) return;
+
+        _ctx.Vk.DeviceWaitIdle(_ctx.Device);
+
+        if (_depthImageView.Handle != 0) _ctx.Vk.DestroyImageView(_ctx.Device, _depthImageView, null);
+        if (_depthImage.Handle != 0) _ctx.Vk.DestroyImage(_ctx.Device, _depthImage, null);
+        if (_depthImageMemory.Handle != 0) _ctx.Vk.FreeMemory(_ctx.Device, _depthImageMemory, null);
+        _depthImageView = default;
+        _depthImage = default;
+        _depthImageMemory = default;
+
+        if (_swapchainImageViews != null) {
+            foreach (var view in _swapchainImageViews) {
+                if (view.Handle != 0) _ctx.Vk.DestroyImageView(_ctx.Device, view, null);
+            }
+        }
+
+        var oldSwapchain = _swapchain;
+
+        var builder = new SwapchainBuilder(
                 _ctx.Vk, _ctx.Device, _ctx.PhysicalDevice, _ctx.Surface, _ctx.KhrSurface,
                 _ctx.QueueFamilies)
             .WithExtent(_window.Size)
@@ -59,15 +77,23 @@ public unsafe class Renderer : IDisposable {
             .WithPresentMode(PresentModeKHR.MailboxKhr)
             .WithImageCount(FrameOverlap);
         
-        if (_swapchain.Handle != 0) {
-            _swapchainBuilder.WithOldSwapchain(_swapchain);
+        if (oldSwapchain.Handle != 0) {
+            builder.WithOldSwapchain(oldSwapchain);
         }
 
-        _swapchain = _swapchainBuilder.Build();
-        _swapchainImages = _swapchainBuilder.Images;
-        _swapchainImageViews = _swapchainBuilder.ImageViews;
-        _swapchainImageFormat = _swapchainBuilder.ImageFormat;
-        _swapchainExtent = _swapchainBuilder.Extent;
+        _swapchain = builder.Build();
+
+        if (oldSwapchain.Handle != 0) {
+            _ctx.KhrSwapchain.DestroySwapchain(_ctx.Device, oldSwapchain, null);
+        }
+
+        _swapchainImages = builder.Images;
+        _swapchainImageViews = builder.ImageViews;
+        _swapchainImageFormat = builder.ImageFormat;
+        _swapchainExtent = builder.Extent;
+
+        CreateDepthResources();
+        builder.Dispose();
     }
 
     private void CreateDepthResources() {
@@ -155,13 +181,16 @@ public unsafe class Renderer : IDisposable {
     }
 
     public VulkanCommandBuffer BeginFrame() {
+        if (_window.Size.X == 0 || _window.Size.Y == 0) return default;
+
         var fence = CurrentFrame.RenderFence;
         _ctx.Vk.WaitForFences(_ctx.Device, 1, &fence, true, 1_000_000_000);
 
         if (_resized) {
-            _ctx.Vk.DeviceWaitIdle(_ctx.Device);
-            CreateSwapchain();
+            RecreateSwapchain();
             _resized = false;
+            // Return early to skip this frame if minimized or just recreated
+            if (_swapchain.Handle == 0) return default;
         }
 
         _ctx.Vk.ResetFences(_ctx.Device, 1, &fence);
@@ -230,6 +259,8 @@ public unsafe class Renderer : IDisposable {
     }
 
     public void EndFrame() {
+        if (_currentCmd.Handle == 0) return;
+
         _ctx.Vk.CmdEndRendering(_currentCmd);
 
         ImageUtils.TransitionImage(_ctx.Vk, _currentCmd, _swapchainImages[_imageIndex], 
@@ -278,7 +309,10 @@ public unsafe class Renderer : IDisposable {
             PImageIndices = &imageIndex
         };
 
-        _ctx.KhrSwapchain.QueuePresent(_ctx.PresentQueue, &presentInfo);
+        var result = _ctx.KhrSwapchain.QueuePresent(_ctx.PresentQueue, &presentInfo);
+        if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr) {
+            _resized = true;
+        }
 
         _frameNumber++;
     }
