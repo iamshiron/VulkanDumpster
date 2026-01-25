@@ -11,7 +11,7 @@ namespace Shiron.VulkanDumpster.Vulkan;
 public class Mesh : IDisposable {
     private readonly VulkanContext _ctx;
     private readonly List<Vertex> _vertices = new();
-    private readonly List<ushort> _indices = new();
+    private readonly List<uint> _indices = new();
 
     private VulkanBuffer? _vertexBuffer;
     private VulkanBuffer? _indexBuffer;
@@ -31,7 +31,7 @@ public class Mesh : IDisposable {
         _isDirty = true;
     }
 
-    public void AddIndex(ushort index) {
+    public void AddIndex(uint index) {
         _indices.Add(index);
         _isDirty = true;
     }
@@ -69,7 +69,7 @@ public class Mesh : IDisposable {
         _vertexBuffer.UploadData(_vertices.ToArray(), _ctx.CommandPool, _ctx.GraphicsQueue);
 
         if (_indices.Count > 0) {
-            ulong requiredIndexSize = (ulong)(_indices.Count * sizeof(ushort));
+            ulong requiredIndexSize = (ulong)(_indices.Count * sizeof(uint));
             if (_indexBuffer == null || _indexBuffer.Size < requiredIndexSize) {
                 _indexBuffer?.Dispose();
                 _indexBuffer = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
@@ -88,7 +88,7 @@ public class Mesh : IDisposable {
             cmd.BindVertexBuffer(_vertexBuffer);
         }
         if (_indexBuffer != null) {
-            cmd.BindIndexBuffer(_indexBuffer);
+            cmd.BindIndexBuffer(_indexBuffer, IndexType.Uint32);
         }
     }
 

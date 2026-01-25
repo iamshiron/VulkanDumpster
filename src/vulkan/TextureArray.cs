@@ -1,75 +1,43 @@
 using System;
-using System.IO;
 using Silk.NET.Vulkan;
-using StbImageSharp;
 
 namespace Shiron.VulkanDumpster.Vulkan;
 
-public class Texture : IDisposable {
+public class TextureArray : IDisposable {
     private readonly VulkanContext _ctx;
     public VulkanImage Image { get; private set; }
     public VulkanSampler Sampler { get; private set; }
 
-    public Texture(VulkanContext ctx, uint width, uint height, byte[] pixels, Filter magFilter = Filter.Linear, Filter minFilter = Filter.Linear) {
+    public TextureArray(VulkanContext ctx, uint width, uint height, byte[][] pixelsList, Filter magFilter = Filter.Nearest, Filter minFilter = Filter.Nearest) {
         _ctx = ctx;
-        ulong imageSize = (ulong)(width * height * 4);
+        uint layerCount = (uint)pixelsList.Length;
+        ulong layerSize = (ulong)(width * height * 4);
+        ulong totalSize = layerSize * layerCount;
 
+        // One big staging buffer for all layers
         using var stagingBuffer = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
-            imageSize, BufferUsageFlags.TransferSrcBit,
+            totalSize, BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
         unsafe {
-            fixed (byte* pData = pixels) {
-                System.Buffer.MemoryCopy(pData, stagingBuffer.MappedData, imageSize, imageSize);
+            byte* pStart = (byte*)stagingBuffer.MappedData;
+            for (int i = 0; i < layerCount; i++) {
+                fixed (byte* pData = pixelsList[i]) {
+                    System.Buffer.MemoryCopy(pData, pStart + ((long)i * (long)layerSize), layerSize, layerSize);
+                }
             }
         }
 
         Image = new VulkanImage(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
-            width, height, 1, Format.R8G8B8A8Srgb,
+            width, height, layerCount, Format.R8G8B8A8Srgb,
             ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit,
             MemoryPropertyFlags.DeviceLocalBit, ImageAspectFlags.ColorBit);
 
-        TransitionAndCopy(stagingBuffer.Handle, width, height);
+        TransitionAndCopy(stagingBuffer.Handle, width, height, layerCount);
         Sampler = new VulkanSampler(_ctx.Vk, _ctx.Device, magFilter, minFilter);
     }
 
-    public Texture(VulkanContext ctx, string filePath, Filter magFilter = Filter.Linear, Filter minFilter = Filter.Linear) {
-        _ctx = ctx;
-
-        // Vulkan expects (0,0) at top-left, but many image formats/conventions use bottom-left.
-        // Flipping on load is a common practice to ensure "up" is actually "up".
-        StbImage.stbi_set_flip_vertically_on_load(1);
-
-        // Load image from file
-        ImageResult image = ImageResult.FromStream(File.OpenRead(filePath), ColorComponents.RedGreenBlueAlpha);
-
-        ulong imageSize = (ulong)(image.Width * image.Height * 4);
-
-        // Create staging buffer
-        using var stagingBuffer = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
-            imageSize, BufferUsageFlags.TransferSrcBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-
-        unsafe {
-            fixed (byte* pData = image.Data) {
-                System.Buffer.MemoryCopy(pData, stagingBuffer.MappedData, imageSize, imageSize);
-            }
-        }
-
-        // Create GPU image
-        Image = new VulkanImage(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
-            (uint)image.Width, (uint)image.Height, 1, Format.R8G8B8A8Srgb,
-            ImageUsageFlags.TransferDstBit | ImageUsageFlags.SampledBit,
-            MemoryPropertyFlags.DeviceLocalBit, ImageAspectFlags.ColorBit);
-
-        // Transition layout and copy
-        TransitionAndCopy(stagingBuffer.Handle, (uint)image.Width, (uint)image.Height);
-
-        // Create sampler
-        Sampler = new VulkanSampler(_ctx.Vk, _ctx.Device, magFilter, minFilter);
-    }
-
-    private unsafe void TransitionAndCopy(Silk.NET.Vulkan.Buffer stagingBuffer, uint width, uint height) {
+    private unsafe void TransitionAndCopy(Silk.NET.Vulkan.Buffer stagingBuffer, uint width, uint height, uint layerCount) {
         var allocInfo = new CommandBufferAllocateInfo {
             SType = StructureType.CommandBufferAllocateInfo,
             Level = CommandBufferLevel.Primary,
@@ -86,7 +54,6 @@ public class Texture : IDisposable {
 
         _ctx.Vk.BeginCommandBuffer(commandBuffer, &beginInfo);
 
-        // Transition to Transfer Dst
         ImageUtils.TransitionImage(_ctx.Vk, commandBuffer, Image.Handle, 
             ImageLayout.Undefined, ImageLayout.TransferDstOptimal);
 
@@ -94,7 +61,7 @@ public class Texture : IDisposable {
             BufferOffset = 0,
             BufferRowLength = 0,
             BufferImageHeight = 0,
-            ImageSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, 0, 0, 1),
+            ImageSubresource = new ImageSubresourceLayers(ImageAspectFlags.ColorBit, 0, 0, layerCount),
             ImageOffset = new Offset3D(0, 0, 0),
             ImageExtent = new Extent3D(width, height, 1)
         };
@@ -102,7 +69,6 @@ public class Texture : IDisposable {
         _ctx.Vk.CmdCopyBufferToImage(commandBuffer, stagingBuffer, Image.Handle, 
             ImageLayout.TransferDstOptimal, 1, &region);
 
-        // Transition to Shader Read
         ImageUtils.TransitionImage(_ctx.Vk, commandBuffer, Image.Handle, 
             ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
 

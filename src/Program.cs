@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using Shiron.VulkanDumpster.Voxels;
 using Shiron.VulkanDumpster.Vulkan;
 using Silk.NET.Core;
 using Silk.NET.Input;
@@ -21,9 +22,9 @@ public class Program {
     private static DescriptorSetLayout _descriptorSetLayout;
     private static DescriptorSet[] _descriptorSets = [];
 
-    private static Mesh _mainMesh = null!;
+    private static Chunk _chunk = null!;
     private static VulkanBuffer[] _uniformBuffers = [];
-    private static Texture _texture = null!;
+    private static TextureArray _textureArray = null!;
 
     private static FPSCamera _camera = null!;
     private static readonly HashSet<Key> _pressedKeys = new();
@@ -32,10 +33,14 @@ public class Program {
 
     private static double _elapsedTime;
 
-    private struct UniformBufferObject {
+    // Global UBO: Shared by everything
+    private struct GlobalUniforms {
+        public Matrix4X4<float> ViewProj;
+    }
+
+    // Push Constants: Changes per draw call (perfect for voxel chunks)
+    private struct PushConstants {
         public Matrix4X4<float> Model;
-        public Matrix4X4<float> View;
-        public Matrix4X4<float> Proj;
     }
 
     public static void Main(string[] args) {
@@ -53,7 +58,7 @@ public class Program {
 
     private void CreateWindow() {
         var options = WindowOptions.DefaultVulkan;
-        options.Title = "Vulkan Dumpster - Textures";
+        options.Title = "Vulkan Dumpster - Voxel Chunk";
         options.Size = new Vector2D<int>(1920, 1080);
 
         _window = Window.Create(options);
@@ -73,15 +78,18 @@ public class Program {
             new DescriptorPoolSize(DescriptorType.UniformBuffer, 3),
             new DescriptorPoolSize(DescriptorType.CombinedImageSampler, 3));
 
-        CreateTexture();
-        CreateMesh();
+        CreateTextureArray();
+        CreateChunk();
         CreateUniformBuffers();
         CreateTrianglePipeline();
 
-        _camera = new FPSCamera(new Vector3D<float>(0, 0, 5));
+        _camera = new FPSCamera(new Vector3D<float>(16, 32, 40));
+        _camera.Pitch = -45.0f;
 
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
-        Console.WriteLine("  ✓ Texture abstraction implemented successfully!");
+        Console.WriteLine("  ✓ Voxel Chunk System Initialized!");
+        Console.WriteLine("  • Texture Array with 3 layers (Grass, Dirt, Stone)");
+        Console.WriteLine("  • Naive meshing of 32x32x32 chunk space");
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
     }
 
@@ -110,56 +118,34 @@ public class Program {
         _context.Vk.CreateDescriptorSetLayout(_context.Device, &layoutInfo, null, out _descriptorSetLayout);
     }
 
-    private void CreateTexture() {
-        // Create a 2x2 procedural checkerboard
-        byte[] pixels = [
-            255, 255, 255, 255,   0,   0,   0, 255,
-              0,   0,   0, 255, 255, 255, 255, 255
-        ];
-        //_texture = new Texture(_context, 2, 2, pixels, Filter.Nearest, Filter.Nearest);
-        _texture = new Texture(_context, "assets/pixiewall-p5kvnp-5120x2880.jpg", Filter.Linear, Filter.Linear);
+    private void CreateTextureArray() {
+        // Create 3 textures: Grass(Green), Dirt(Brown), Stone(Gray)
+        byte[] grass = [0, 255, 0, 255, 30, 200, 30, 255, 0, 255, 0, 255, 30, 200, 30, 255];
+        byte[] dirt = [139, 69, 19, 255, 100, 50, 10, 255, 139, 69, 19, 255, 100, 50, 10, 255];
+        byte[] stone = [128, 128, 128, 255, 100, 100, 100, 255, 128, 128, 128, 255, 100, 100, 100, 255];
+
+        _textureArray = new TextureArray(_context, 2, 2, new[] { grass, dirt, stone }, Filter.Nearest, Filter.Nearest);
     }
 
-    private void CreateMesh() {
-        _mainMesh = new Mesh(_context);
-        var vertices = new[] {
-            new Vertex(new Vector3D<float>(-0.5f, -0.5f,  0.5f), new Vector2D<float>(0, 0)),
-            new Vertex(new Vector3D<float>( 0.5f, -0.5f,  0.5f), new Vector2D<float>(1, 0)),
-            new Vertex(new Vector3D<float>( 0.5f,  0.5f,  0.5f), new Vector2D<float>(1, 1)),
-            new Vertex(new Vector3D<float>(-0.5f,  0.5f,  0.5f), new Vector2D<float>(0, 1)),
-            new Vertex(new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector2D<float>(1, 0)),
-            new Vertex(new Vector3D<float>(-0.5f,  0.5f, -0.5f), new Vector2D<float>(1, 1)),
-            new Vertex(new Vector3D<float>( 0.5f,  0.5f, -0.5f), new Vector2D<float>(0, 1)),
-            new Vertex(new Vector3D<float>( 0.5f, -0.5f, -0.5f), new Vector2D<float>(0, 0)),
-            new Vertex(new Vector3D<float>(-0.5f,  0.5f, -0.5f), new Vector2D<float>(0, 0)),
-            new Vertex(new Vector3D<float>(-0.5f,  0.5f,  0.5f), new Vector2D<float>(0, 1)),
-            new Vertex(new Vector3D<float>( 0.5f,  0.5f,  0.5f), new Vector2D<float>(1, 1)),
-            new Vertex(new Vector3D<float>( 0.5f,  0.5f, -0.5f), new Vector2D<float>(1, 0)),
-            new Vertex(new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector2D<float>(0, 0)),
-            new Vertex(new Vector3D<float>( 0.5f, -0.5f, -0.5f), new Vector2D<float>(1, 0)),
-            new Vertex(new Vector3D<float>( 0.5f, -0.5f,  0.5f), new Vector2D<float>(1, 1)),
-            new Vertex(new Vector3D<float>(-0.5f, -0.5f,  0.5f), new Vector2D<float>(0, 1)),
-            new Vertex(new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector2D<float>(0, 0)),
-            new Vertex(new Vector3D<float>(-0.5f, -0.5f,  0.5f), new Vector2D<float>(1, 0)),
-            new Vertex(new Vector3D<float>(-0.5f,  0.5f,  0.5f), new Vector2D<float>(1, 1)),
-            new Vertex(new Vector3D<float>(-0.5f,  0.5f, -0.5f), new Vector2D<float>(0, 1)),
-            new Vertex(new Vector3D<float>( 0.5f, -0.5f, -0.5f), new Vector2D<float>(1, 0)),
-            new Vertex(new Vector3D<float>( 0.5f,  0.5f, -0.5f), new Vector2D<float>(1, 1)),
-            new Vertex(new Vector3D<float>( 0.5f,  0.5f,  0.5f), new Vector2D<float>(0, 1)),
-            new Vertex(new Vector3D<float>( 0.5f, -0.5f,  0.5f), new Vector2D<float>(0, 0))
-        };
+    private void CreateChunk() {
+        _chunk = new Chunk(_context, new Vector3D<float>(0, 0, 0));
 
-        foreach (var v in vertices) _mainMesh.AddVertex(v);
-        for (ushort i = 0; i < 6; i++) {
-            ushort offset = (ushort) (i * 4);
-            _mainMesh.AddIndex((ushort) (offset + 0));
-            _mainMesh.AddIndex((ushort) (offset + 1));
-            _mainMesh.AddIndex((ushort) (offset + 2));
-            _mainMesh.AddIndex((ushort) (offset + 2));
-            _mainMesh.AddIndex((ushort) (offset + 3));
-            _mainMesh.AddIndex((ushort) (offset + 0));
+        // Generate terrain
+        for (int x = 0; x < Chunk.Size; x++) {
+            for (int z = 0; z < Chunk.Size; z++) {
+                // Simple sine wave terrain
+                int height = (int) (MathF.Sin(x * 0.2f) * 4 + MathF.Cos(z * 0.2f) * 4 + 8);
+                height = Math.Clamp(height, 1, Chunk.Size - 1);
+
+                for (int y = 0; y < height; y++) {
+                    BlockType type = BlockType.Stone;
+                    if (y == height - 1) type = BlockType.Grass;
+                    else if (y > height - 4) type = BlockType.Dirt;
+
+                    _chunk.SetBlock(x, y, z, type);
+                }
+            }
         }
-        _mainMesh.Build();
     }
 
     private unsafe void CreateUniformBuffers() {
@@ -167,17 +153,16 @@ public class Program {
         _descriptorSets = new DescriptorSet[3];
         for (int i = 0; i < 3; i++) {
             _uniformBuffers[i] = new VulkanBuffer(_context.Vk, _context.Device, _context.PhysicalDevice,
-                (ulong) sizeof(UniformBufferObject),
+                (ulong) sizeof(GlobalUniforms),
                 BufferUsageFlags.UniformBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
 
             _descriptorSets[i] = _descriptorManager.Allocate(_descriptorSetLayout);
             _descriptorManager.UpdateBuffer(_descriptorSets[i], 0, DescriptorType.UniformBuffer,
-                _uniformBuffers[i].Handle, (ulong) sizeof(UniformBufferObject));
+                _uniformBuffers[i].Handle, (ulong) sizeof(GlobalUniforms));
 
-            // Update the same descriptor set with the texture sampler
             _descriptorManager.UpdateImage(_descriptorSets[i], 1, DescriptorType.CombinedImageSampler,
-                _texture.Image.View, _texture.Sampler.Handle);
+                _textureArray.Image.View, _textureArray.Sampler.Handle);
         }
     }
 
@@ -185,10 +170,18 @@ public class Program {
         ShaderUtils.LoadShaderModule(_context.Vk, _context.Device, "shaders/colored_triangle.vert.spv", out var vert);
         ShaderUtils.LoadShaderModule(_context.Vk, _context.Device, "shaders/colored_triangle.frag.spv", out var frag);
 
+        var pushConstantRange = new PushConstantRange {
+            StageFlags = ShaderStageFlags.VertexBit,
+            Offset = 0,
+            Size = (uint) sizeof(PushConstants)
+        };
+
         var layoutInfo = new PipelineLayoutCreateInfo {
             SType = StructureType.PipelineLayoutCreateInfo,
             SetLayoutCount = 1,
-            PSetLayouts = (DescriptorSetLayout*) Unsafe.AsPointer(ref _descriptorSetLayout)
+            PSetLayouts = (DescriptorSetLayout*) Unsafe.AsPointer(ref _descriptorSetLayout),
+            PushConstantRangeCount = 1,
+            PPushConstantRanges = &pushConstantRange
         };
 
         _context.Vk.CreatePipelineLayout(_context.Device, &layoutInfo, null, out var pipelineLayout);
@@ -213,7 +206,7 @@ public class Program {
 
     private unsafe void Render(double delta) {
         _elapsedTime += delta;
-        _mainMesh.UpdateGpuBuffers();
+        _chunk.Update(); // Rebuild mesh if needed
 
         var cmd = _renderer.BeginFrame();
         if (cmd.Handle.Handle == 0) return;
@@ -223,20 +216,30 @@ public class Program {
 
         cmd.BindPipeline(_trianglePipeline);
         cmd.BindDescriptorSets(_trianglePipeline, new[] { _descriptorSets[frameIndex] });
-        _mainMesh.Bind(cmd);
-        cmd.DrawIndexed((uint) _mainMesh.IndexCount);
+
+        // Push chunk model matrix
+        var pc = new PushConstants {
+            Model = Matrix4X4.CreateTranslation(_chunk.Position)
+        };
+        cmd.PushConstants(_trianglePipeline, ShaderStageFlags.VertexBit, pc);
+
+        if (_chunk.Mesh.IndexCount > 0) {
+            _chunk.Mesh.Bind(cmd);
+            cmd.DrawIndexed((uint) _chunk.Mesh.IndexCount);
+        }
 
         _renderer.EndFrame();
     }
 
     private unsafe void UpdateUniformBuffer(int index) {
         var extent = _renderer.SwapchainExtent;
-        var ubo = new UniformBufferObject {
-            Model = Matrix4X4<float>.Identity,
-            View = _camera.GetViewMatrix(),
-            Proj = _camera.GetProjectionMatrix(extent.Width / (float) extent.Height)
+        var view = _camera.GetViewMatrix();
+        var proj = _camera.GetProjectionMatrix(extent.Width / (float) extent.Height);
+        proj.M22 *= -1;
+
+        var ubo = new GlobalUniforms {
+            ViewProj = view * proj
         };
-        ubo.Proj.M22 *= -1;
         Unsafe.Copy(_uniformBuffers[index].MappedData, ref ubo);
     }
 
@@ -288,8 +291,8 @@ public class Program {
         _trianglePipeline?.Dispose();
         _context.Vk.DestroyDescriptorSetLayout(_context.Device, _descriptorSetLayout, null);
 
-        _mainMesh?.Dispose();
-        _texture?.Dispose();
+        _chunk.Mesh.Dispose(); // Note: Chunk should probably be disposable
+        _textureArray?.Dispose();
         foreach (var ubo in _uniformBuffers) ubo.Dispose();
 
         _descriptorManager?.Dispose();

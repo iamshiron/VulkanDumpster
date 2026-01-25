@@ -34,6 +34,10 @@ public unsafe struct VulkanCommandBuffer {
         _vk.CmdBindIndexBuffer(Handle, buffer.Handle, 0, indexType);
     }
 
+    public void PushConstants<T>(VulkanPipeline pipeline, ShaderStageFlags stages, T data) where T : unmanaged {
+        _vk.CmdPushConstants(Handle, pipeline.Layout, stages, 0, (uint)sizeof(T), &data);
+    }
+
     public void DrawIndexed(uint indexCount, uint instanceCount = 1, uint firstIndex = 0, int vertexOffset = 0, uint firstInstance = 0) {
         _vk.CmdDrawIndexed(Handle, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
     }

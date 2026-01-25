@@ -7,10 +7,12 @@ namespace Shiron.VulkanDumpster.Vulkan;
 public struct Vertex {
     public Vector3D<float> Position;
     public Vector2D<float> TexCoord;
+    public float TexIndex;
 
-    public Vertex(Vector3D<float> position, Vector2D<float> texCoord) {
+    public Vertex(Vector3D<float> position, Vector2D<float> texCoord, float texIndex) {
         Position = position;
         TexCoord = texCoord;
+        TexIndex = texIndex;
     }
 
     public static unsafe VertexInputBindingDescription GetBindingDescription() {
@@ -34,6 +36,12 @@ public struct Vertex {
                 Location = 1,
                 Format = Format.R32G32Sfloat,
                 Offset = (uint)System.Runtime.InteropServices.Marshal.OffsetOf<Vertex>(nameof(TexCoord))
+            },
+            new VertexInputAttributeDescription {
+                Binding = 0,
+                Location = 2,
+                Format = Format.R32Sfloat,
+                Offset = (uint)System.Runtime.InteropServices.Marshal.OffsetOf<Vertex>(nameof(TexIndex))
             }
         };
     }

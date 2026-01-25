@@ -17,27 +17,28 @@ public unsafe class VulkanImage : IDisposable {
     public Format Format { get; private set; }
     public Extent2D Extent { get; private set; }
 
-    public VulkanImage(Vk vk, Device device, PhysicalDevice physicalDevice, uint width, uint height, Format format, ImageUsageFlags usage, MemoryPropertyFlags properties, ImageAspectFlags aspectFlags) {
+    public VulkanImage(Vk vk, Device device, PhysicalDevice physicalDevice, uint width, uint height, uint arrayLayers, Format format, ImageUsageFlags usage, MemoryPropertyFlags properties, ImageAspectFlags aspectFlags) {
         _vk = vk;
         _device = device;
         _physicalDevice = physicalDevice;
         Format = format;
         Extent = new Extent2D(width, height);
 
-        CreateImage(width, height, format, usage, properties, out var image, out var memory);
+        CreateImage(width, height, arrayLayers, format, usage, properties, out var image, out var memory);
         Handle = image;
         Memory = memory;
 
-        View = CreateImageView(Handle, format, aspectFlags);
+        var viewType = arrayLayers > 1 ? ImageViewType.Type2DArray : ImageViewType.Type2D;
+        View = CreateImageView(Handle, viewType, format, aspectFlags, arrayLayers);
     }
 
-    private void CreateImage(uint width, uint height, Format format, ImageUsageFlags usage, MemoryPropertyFlags properties, out Image image, out DeviceMemory memory) {
+    private void CreateImage(uint width, uint height, uint arrayLayers, Format format, ImageUsageFlags usage, MemoryPropertyFlags properties, out Image image, out DeviceMemory memory) {
         var imageInfo = new ImageCreateInfo {
             SType = StructureType.ImageCreateInfo,
             ImageType = ImageType.Type2D,
             Extent = new Extent3D(width, height, 1),
             MipLevels = 1,
-            ArrayLayers = 1,
+            ArrayLayers = arrayLayers,
             Format = format,
             Tiling = ImageTiling.Optimal,
             InitialLayout = ImageLayout.Undefined,
@@ -65,13 +66,13 @@ public unsafe class VulkanImage : IDisposable {
         _vk.BindImageMemory(_device, image, memory, 0);
     }
 
-    private ImageView CreateImageView(Image image, Format format, ImageAspectFlags aspectFlags) {
+    private ImageView CreateImageView(Image image, ImageViewType viewType, Format format, ImageAspectFlags aspectFlags, uint layerCount) {
         var viewInfo = new ImageViewCreateInfo {
             SType = StructureType.ImageViewCreateInfo,
             Image = image,
-            ViewType = ImageViewType.Type2D,
+            ViewType = viewType,
             Format = format,
-            SubresourceRange = new ImageSubresourceRange(aspectFlags, 0, 1, 0, 1)
+            SubresourceRange = new ImageSubresourceRange(aspectFlags, 0, 1, 0, layerCount)
         };
 
         if (_vk.CreateImageView(_device, &viewInfo, null, out var imageView) != Result.Success) {
