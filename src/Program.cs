@@ -1,30 +1,36 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+using Shiron.VulkanDumpster.Vulkan;
 using Silk.NET.Core;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Windowing;
-using Shiron.VulkanDumpster.Vulkan;
 
 namespace Shiron.VulkanDumpster;
 
 public class Program {
     private static IWindow _window = null!;
-    
+    private static IInputContext _input = null!;
+
     private static VulkanContext _context = null!;
     private static Renderer _renderer = null!;
     private static DescriptorSetManager _descriptorManager = null!;
-    
+
     private static VulkanPipeline _trianglePipeline = null!;
     private static DescriptorSetLayout _descriptorSetLayout;
     private static DescriptorSet[] _descriptorSets = [];
-    
+
     private static Mesh _mainMesh = null!;
     private static VulkanBuffer[] _uniformBuffers = [];
 
+    private static FPSCamera _camera = null!;
+    private static readonly HashSet<Key> _pressedKeys = new();
+    private static Vector2 _lastMousePos;
+    private static bool _firstMouse = true;
+
     private static double _elapsedTime;
-    
+
     private struct UniformBufferObject {
         public Matrix4X4<float> Model;
         public Matrix4X4<float> View;
@@ -38,38 +44,43 @@ public class Program {
     public void Run() {
         CreateWindow();
         InitializeVulkan();
-        
+
         _window.Run();
-        
+
         Cleanup();
     }
 
     private void CreateWindow() {
         var options = WindowOptions.DefaultVulkan;
-        options.Title = "Vulkan Dumpster - 3D Cube Mesh";
+        options.Title = "Vulkan Dumpster - FPS Camera";
         options.Size = new Vector2D<int>(1920, 1080);
 
         _window = Window.Create(options);
-        _window.Initialize();
-        
+
         _window.Load += OnLoad;
+        _window.Update += OnUpdate;
         _window.Render += Render;
+        _window.Initialize();
     }
 
     private unsafe void InitializeVulkan() {
         _context = new VulkanContext(_window);
         _renderer = new Renderer(_context, _window);
-        
+
         CreateDescriptorSetLayout();
-        _descriptorManager = new DescriptorSetManager(_context.Vk, _context.Device, 3, 
+        _descriptorManager = new DescriptorSetManager(_context.Vk, _context.Device, 3,
             new DescriptorPoolSize(DescriptorType.UniformBuffer, 3));
-        
+
         CreateMesh();
         CreateUniformBuffers();
         CreateTrianglePipeline();
 
+        _camera = new FPSCamera(new Vector3D<float>(0, 0, 5));
+
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
-        Console.WriteLine("  ✓ 3D Cube initialized successfully!");
+        Console.WriteLine("  ✓ FPS Camera System Initialized");
+        Console.WriteLine("  • WASD to move, Space/Ctrl to go up/down");
+        Console.WriteLine("  • Use mouse to look around (Right-click to capture)");
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
     }
 
@@ -92,35 +103,27 @@ public class Program {
 
     private void CreateMesh() {
         _mainMesh = new Mesh(_context);
-
-        // Cube vertices (Position, TexCoord) - 24 vertices for 6 faces
         var vertices = new[] {
-            // Front face (z = 0.5)
             new Vertex(new Vector3D<float>(-0.5f, -0.5f,  0.5f), new Vector2D<float>(0, 0)),
             new Vertex(new Vector3D<float>( 0.5f, -0.5f,  0.5f), new Vector2D<float>(1, 0)),
             new Vertex(new Vector3D<float>( 0.5f,  0.5f,  0.5f), new Vector2D<float>(1, 1)),
             new Vertex(new Vector3D<float>(-0.5f,  0.5f,  0.5f), new Vector2D<float>(0, 1)),
-            // Back face (z = -0.5)
             new Vertex(new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector2D<float>(1, 0)),
             new Vertex(new Vector3D<float>(-0.5f,  0.5f, -0.5f), new Vector2D<float>(1, 1)),
             new Vertex(new Vector3D<float>( 0.5f,  0.5f, -0.5f), new Vector2D<float>(0, 1)),
             new Vertex(new Vector3D<float>( 0.5f, -0.5f, -0.5f), new Vector2D<float>(0, 0)),
-            // Top face (y = 0.5)
             new Vertex(new Vector3D<float>(-0.5f,  0.5f, -0.5f), new Vector2D<float>(0, 0)),
             new Vertex(new Vector3D<float>(-0.5f,  0.5f,  0.5f), new Vector2D<float>(0, 1)),
             new Vertex(new Vector3D<float>( 0.5f,  0.5f,  0.5f), new Vector2D<float>(1, 1)),
             new Vertex(new Vector3D<float>( 0.5f,  0.5f, -0.5f), new Vector2D<float>(1, 0)),
-            // Bottom face (y = -0.5)
             new Vertex(new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector2D<float>(0, 0)),
             new Vertex(new Vector3D<float>( 0.5f, -0.5f, -0.5f), new Vector2D<float>(1, 0)),
             new Vertex(new Vector3D<float>( 0.5f, -0.5f,  0.5f), new Vector2D<float>(1, 1)),
             new Vertex(new Vector3D<float>(-0.5f, -0.5f,  0.5f), new Vector2D<float>(0, 1)),
-            // Left face (x = -0.5)
             new Vertex(new Vector3D<float>(-0.5f, -0.5f, -0.5f), new Vector2D<float>(0, 0)),
             new Vertex(new Vector3D<float>(-0.5f, -0.5f,  0.5f), new Vector2D<float>(1, 0)),
             new Vertex(new Vector3D<float>(-0.5f,  0.5f,  0.5f), new Vector2D<float>(1, 1)),
             new Vertex(new Vector3D<float>(-0.5f,  0.5f, -0.5f), new Vector2D<float>(0, 1)),
-            // Right face (x = 0.5)
             new Vertex(new Vector3D<float>( 0.5f, -0.5f, -0.5f), new Vector2D<float>(1, 0)),
             new Vertex(new Vector3D<float>( 0.5f,  0.5f, -0.5f), new Vector2D<float>(1, 1)),
             new Vertex(new Vector3D<float>( 0.5f,  0.5f,  0.5f), new Vector2D<float>(0, 1)),
@@ -128,18 +131,15 @@ public class Program {
         };
 
         foreach (var v in vertices) _mainMesh.AddVertex(v);
-
-        // Indices for 6 faces (12 triangles)
         for (ushort i = 0; i < 6; i++) {
-            ushort offset = (ushort)(i * 4);
-            _mainMesh.AddIndex((ushort)(offset + 0));
-            _mainMesh.AddIndex((ushort)(offset + 1));
-            _mainMesh.AddIndex((ushort)(offset + 2));
-            _mainMesh.AddIndex((ushort)(offset + 2));
-            _mainMesh.AddIndex((ushort)(offset + 3));
-            _mainMesh.AddIndex((ushort)(offset + 0));
+            ushort offset = (ushort) (i * 4);
+            _mainMesh.AddIndex((ushort) (offset + 0));
+            _mainMesh.AddIndex((ushort) (offset + 1));
+            _mainMesh.AddIndex((ushort) (offset + 2));
+            _mainMesh.AddIndex((ushort) (offset + 2));
+            _mainMesh.AddIndex((ushort) (offset + 3));
+            _mainMesh.AddIndex((ushort) (offset + 0));
         }
-
         _mainMesh.Build();
     }
 
@@ -148,13 +148,13 @@ public class Program {
         _descriptorSets = new DescriptorSet[3];
         for (int i = 0; i < 3; i++) {
             _uniformBuffers[i] = new VulkanBuffer(_context.Vk, _context.Device, _context.PhysicalDevice,
-                (ulong)sizeof(UniformBufferObject),
+                (ulong) sizeof(UniformBufferObject),
                 BufferUsageFlags.UniformBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-            
+
             _descriptorSets[i] = _descriptorManager.Allocate(_descriptorSetLayout);
-            _descriptorManager.UpdateBuffer(_descriptorSets[i], 0, DescriptorType.UniformBuffer, 
-                _uniformBuffers[i].Handle, (ulong)sizeof(UniformBufferObject));
+            _descriptorManager.UpdateBuffer(_descriptorSets[i], 0, DescriptorType.UniformBuffer,
+                _uniformBuffers[i].Handle, (ulong) sizeof(UniformBufferObject));
         }
     }
 
@@ -165,7 +165,7 @@ public class Program {
         var layoutInfo = new PipelineLayoutCreateInfo {
             SType = StructureType.PipelineLayoutCreateInfo,
             SetLayoutCount = 1,
-            PSetLayouts = (DescriptorSetLayout*)Unsafe.AsPointer(ref _descriptorSetLayout)
+            PSetLayouts = (DescriptorSetLayout*) Unsafe.AsPointer(ref _descriptorSetLayout)
         };
 
         _context.Vk.CreatePipelineLayout(_context.Device, &layoutInfo, null, out var pipelineLayout);
@@ -201,7 +201,7 @@ public class Program {
         cmd.BindPipeline(_trianglePipeline);
         cmd.BindDescriptorSets(_trianglePipeline, new[] { _descriptorSets[frameIndex] });
         _mainMesh.Bind(cmd);
-        cmd.DrawIndexed((uint)_mainMesh.IndexCount);
+        cmd.DrawIndexed((uint) _mainMesh.IndexCount);
 
         _renderer.EndFrame();
     }
@@ -209,16 +209,54 @@ public class Program {
     private unsafe void UpdateUniformBuffer(int index) {
         var extent = _renderer.SwapchainExtent;
         var ubo = new UniformBufferObject {
-            Model = Matrix4X4.CreateRotationY((float)_elapsedTime) * Matrix4X4.CreateRotationX((float)_elapsedTime * 0.5f),
-            View = Matrix4X4.CreateLookAt<float>(new Vector3D<float>(2, 2, 2), Vector3D<float>.Zero, new Vector3D<float>(0, 0, 1)),
-            Proj = Matrix4X4.CreatePerspectiveFieldOfView<float>(MathF.PI / 4, extent.Width / (float)extent.Height, 0.1f, 10.0f)
+            Model = Matrix4X4<float>.Identity, // Matrix4X4.CreateRotationY((float)_elapsedTime),
+            View = _camera.GetViewMatrix(),
+            Proj = _camera.GetProjectionMatrix(extent.Width / (float) extent.Height)
         };
         ubo.Proj.M22 *= -1;
         Unsafe.Copy(_uniformBuffers[index].MappedData, ref ubo);
     }
 
     private void OnLoad() {
-        _window.CreateInput().Keyboards[0].KeyDown += (k, key, _) => { if (key == Key.Escape) _window.Close(); };
+        _input = _window.CreateInput();
+        foreach (var kb in _input.Keyboards) {
+            kb.KeyDown += (k, key, _) => { _pressedKeys.Add(key); if (key == Key.Escape) _window.Close(); };
+            kb.KeyUp += (k, key, _) => { _pressedKeys.Remove(key); };
+        }
+
+        foreach (var mouse in _input.Mice) {
+            mouse.MouseMove += OnMouseMove;
+            mouse.MouseDown += (m, button) => {
+                if (button == MouseButton.Right) mouse.Cursor.CursorMode = CursorMode.Raw;
+            };
+            mouse.MouseUp += (m, button) => {
+                if (button == MouseButton.Right) mouse.Cursor.CursorMode = CursorMode.Normal;
+            };
+        }
+    }
+
+    private void OnUpdate(double deltaTime) {
+        foreach (var key in _pressedKeys) {
+            _camera.ProcessKeyboard(key, deltaTime);
+        }
+    }
+
+    private void OnMouseMove(IMouse mouse, Vector2 position) {
+        if (mouse.Cursor.CursorMode != CursorMode.Raw) {
+            _firstMouse = true;
+            return;
+        }
+
+        if (_firstMouse) {
+            _lastMousePos = position;
+            _firstMouse = false;
+        }
+
+        float xOffset = position.X - _lastMousePos.X;
+        float yOffset = position.Y - _lastMousePos.Y;
+        _lastMousePos = position;
+
+        _camera.ProcessMouseMovement(xOffset, yOffset);
     }
 
     private unsafe void Cleanup() {
@@ -226,13 +264,14 @@ public class Program {
 
         _trianglePipeline?.Dispose();
         _context.Vk.DestroyDescriptorSetLayout(_context.Device, _descriptorSetLayout, null);
-        
+
         _mainMesh?.Dispose();
         foreach (var ubo in _uniformBuffers) ubo.Dispose();
-        
+
         _descriptorManager?.Dispose();
         _renderer?.Dispose();
         _context?.Dispose();
+        _input?.Dispose();
         _window?.Dispose();
     }
 }
