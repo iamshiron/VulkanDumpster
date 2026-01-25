@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using Shiron.VulkanDumpster.Vulkan;
 using Silk.NET.Core;
@@ -23,6 +23,7 @@ public class Program {
 
     private static Mesh _mainMesh = null!;
     private static VulkanBuffer[] _uniformBuffers = [];
+    private static Texture _texture = null!;
 
     private static FPSCamera _camera = null!;
     private static readonly HashSet<Key> _pressedKeys = new();
@@ -52,7 +53,7 @@ public class Program {
 
     private void CreateWindow() {
         var options = WindowOptions.DefaultVulkan;
-        options.Title = "Vulkan Dumpster - FPS Camera";
+        options.Title = "Vulkan Dumpster - Textures";
         options.Size = new Vector2D<int>(1920, 1080);
 
         _window = Window.Create(options);
@@ -69,8 +70,10 @@ public class Program {
 
         CreateDescriptorSetLayout();
         _descriptorManager = new DescriptorSetManager(_context.Vk, _context.Device, 3,
-            new DescriptorPoolSize(DescriptorType.UniformBuffer, 3));
+            new DescriptorPoolSize(DescriptorType.UniformBuffer, 3),
+            new DescriptorPoolSize(DescriptorType.CombinedImageSampler, 3));
 
+        CreateTexture();
         CreateMesh();
         CreateUniformBuffers();
         CreateTrianglePipeline();
@@ -78,9 +81,7 @@ public class Program {
         _camera = new FPSCamera(new Vector3D<float>(0, 0, 5));
 
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
-        Console.WriteLine("  ✓ FPS Camera System Initialized");
-        Console.WriteLine("  • WASD to move, Space/Ctrl to go up/down");
-        Console.WriteLine("  • Use mouse to look around (Right-click to capture)");
+        Console.WriteLine("  ✓ Texture abstraction implemented successfully!");
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
     }
 
@@ -92,13 +93,31 @@ public class Program {
             StageFlags = ShaderStageFlags.VertexBit
         };
 
+        var samplerLayoutBinding = new DescriptorSetLayoutBinding {
+            Binding = 1,
+            DescriptorCount = 1,
+            DescriptorType = DescriptorType.CombinedImageSampler,
+            StageFlags = ShaderStageFlags.FragmentBit
+        };
+
+        var bindings = stackalloc[] { uboLayoutBinding, samplerLayoutBinding };
         var layoutInfo = new DescriptorSetLayoutCreateInfo {
             SType = StructureType.DescriptorSetLayoutCreateInfo,
-            BindingCount = 1,
-            PBindings = &uboLayoutBinding
+            BindingCount = 2,
+            PBindings = bindings
         };
 
         _context.Vk.CreateDescriptorSetLayout(_context.Device, &layoutInfo, null, out _descriptorSetLayout);
+    }
+
+    private void CreateTexture() {
+        // Create a 2x2 procedural checkerboard
+        byte[] pixels = [
+            255, 255, 255, 255,   0,   0,   0, 255,
+              0,   0,   0, 255, 255, 255, 255, 255
+        ];
+        //_texture = new Texture(_context, 2, 2, pixels, Filter.Nearest, Filter.Nearest);
+        _texture = new Texture(_context, "assets/pixiewall-p5kvnp-5120x2880.jpg", Filter.Linear, Filter.Linear);
     }
 
     private void CreateMesh() {
@@ -155,6 +174,10 @@ public class Program {
             _descriptorSets[i] = _descriptorManager.Allocate(_descriptorSetLayout);
             _descriptorManager.UpdateBuffer(_descriptorSets[i], 0, DescriptorType.UniformBuffer,
                 _uniformBuffers[i].Handle, (ulong) sizeof(UniformBufferObject));
+
+            // Update the same descriptor set with the texture sampler
+            _descriptorManager.UpdateImage(_descriptorSets[i], 1, DescriptorType.CombinedImageSampler,
+                _texture.Image.View, _texture.Sampler.Handle);
         }
     }
 
@@ -209,7 +232,7 @@ public class Program {
     private unsafe void UpdateUniformBuffer(int index) {
         var extent = _renderer.SwapchainExtent;
         var ubo = new UniformBufferObject {
-            Model = Matrix4X4<float>.Identity, // Matrix4X4.CreateRotationY((float)_elapsedTime),
+            Model = Matrix4X4<float>.Identity,
             View = _camera.GetViewMatrix(),
             Proj = _camera.GetProjectionMatrix(extent.Width / (float) extent.Height)
         };
@@ -266,6 +289,7 @@ public class Program {
         _context.Vk.DestroyDescriptorSetLayout(_context.Device, _descriptorSetLayout, null);
 
         _mainMesh?.Dispose();
+        _texture?.Dispose();
         foreach (var ubo in _uniformBuffers) ubo.Dispose();
 
         _descriptorManager?.Dispose();

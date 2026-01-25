@@ -61,6 +61,26 @@ public unsafe class DescriptorSetManager : IDisposable {
         _vk.UpdateDescriptorSets(_device, 1, &write, 0, null);
     }
 
+    public void UpdateImage(DescriptorSet set, uint binding, DescriptorType type, ImageView view, Sampler sampler, ImageLayout layout = ImageLayout.ShaderReadOnlyOptimal) {
+        var imageInfo = new DescriptorImageInfo {
+            ImageView = view,
+            Sampler = sampler,
+            ImageLayout = layout
+        };
+
+        var write = new WriteDescriptorSet {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = set,
+            DstBinding = binding,
+            DstArrayElement = 0,
+            DescriptorType = type,
+            DescriptorCount = 1,
+            PImageInfo = &imageInfo
+        };
+
+        _vk.UpdateDescriptorSets(_device, 1, &write, 0, null);
+    }
+
     public void Dispose() {
         if (_pool.Handle != 0) {
             _vk.DestroyDescriptorPool(_device, _pool, null);
