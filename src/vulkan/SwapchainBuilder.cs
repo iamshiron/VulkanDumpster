@@ -6,7 +6,7 @@ using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 
-namespace Shiron.VulkanDumpster;
+namespace Shiron.VulkanDumpster.Vulkan;
 
 /// <summary>
 /// Utility class for creating and managing a Vulkan swapchain for presenting rendered images.

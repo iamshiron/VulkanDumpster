@@ -1,0 +1,59 @@
+Date : 2026-01-25 19:05:19
+Directory : e:\dev\VulkanDumpster
+Total : 30 files,  -65 codes, -113 comments, 11 blanks, all -167 lines
+
+Languages
++----------+------------+------------+------------+------------+------------+
+| language | files      | code       | comment    | blank      | total      |
++----------+------------+------------+------------+------------+------------+
+| GLSL     |          1 |          5 |          0 |          0 |          5 |
+| C#       |         29 |        -70 |       -113 |         11 |       -172 |
++----------+------------+------------+------------+------------+------------+
+
+Directories
++------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                       | files      | code       | comment    | blank      | total      |
++------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                          |         30 |        -65 |       -113 |         11 |       -167 |
+| shaders                                                    |          1 |          5 |          0 |          0 |          5 |
+| src                                                        |         29 |        -70 |       -113 |         11 |       -172 |
+| src (Files)                                                |         12 |     -2,011 |       -707 |       -472 |     -3,190 |
+| src\vulkan                                                 |         17 |      1,941 |        594 |        483 |      3,018 |
++------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++------------------------------------------------------------+----------+------------+------------+------------+------------+
+| filename                                                   | language | code       | comment    | blank      | total      |
++------------------------------------------------------------+----------+------------+------------+------------+------------+
+| e:\dev\VulkanDumpster\shaders\colored_triangle.vert        | GLSL     |          5 |          0 |          0 |          5 |
+| e:\dev\VulkanDumpster\src\Exceptions.cs                    | C#       |         -7 |         -3 |         -5 |        -15 |
+| e:\dev\VulkanDumpster\src\FrameData.cs                     | C#       |         -9 |        -22 |         -7 |        -38 |
+| e:\dev\VulkanDumpster\src\ImageUtils.cs                    | C#       |        -38 |        -22 |         -6 |        -66 |
+| e:\dev\VulkanDumpster\src\InstanceBuilder.cs               | C#       |       -133 |        -18 |        -31 |       -182 |
+| e:\dev\VulkanDumpster\src\LogicalDeviceBuilder.cs          | C#       |       -299 |       -155 |        -77 |       -531 |
+| e:\dev\VulkanDumpster\src\PhysicalDeviceSelector.cs        | C#       |       -218 |        -72 |        -61 |       -351 |
+| e:\dev\VulkanDumpster\src\PipelineBuilder.cs               | C#       |       -221 |        -57 |        -40 |       -318 |
+| e:\dev\VulkanDumpster\src\Program.cs                       | C#       |       -578 |       -131 |       -114 |       -823 |
+| e:\dev\VulkanDumpster\src\QueueFamilyUtils.cs              | C#       |       -150 |       -137 |        -52 |       -339 |
+| e:\dev\VulkanDumpster\src\ShaderUtils.cs                   | C#       |        -45 |        -20 |        -11 |        -76 |
+| e:\dev\VulkanDumpster\src\SwapchainBuilder.cs              | C#       |       -283 |        -70 |        -62 |       -415 |
+| e:\dev\VulkanDumpster\src\Vertex.cs                        | C#       |        -30 |          0 |         -6 |        -36 |
+| e:\dev\VulkanDumpster\src\vulkan\DescriptorSetManager.cs   | C#       |         57 |          0 |         13 |         70 |
+| e:\dev\VulkanDumpster\src\vulkan\Exceptions.cs             | C#       |          7 |          3 |          5 |         15 |
+| e:\dev\VulkanDumpster\src\vulkan\FrameData.cs              | C#       |         13 |         23 |          8 |         44 |
+| e:\dev\VulkanDumpster\src\vulkan\ImageUtils.cs             | C#       |         38 |         22 |          6 |         66 |
+| e:\dev\VulkanDumpster\src\vulkan\InstanceBuilder.cs        | C#       |        133 |         18 |         30 |        181 |
+| e:\dev\VulkanDumpster\src\vulkan\LogicalDeviceBuilder.cs   | C#       |        299 |        155 |         77 |        531 |
+| e:\dev\VulkanDumpster\src\vulkan\PhysicalDeviceSelector.cs | C#       |        218 |         72 |         61 |        351 |
+| e:\dev\VulkanDumpster\src\vulkan\PipelineBuilder.cs        | C#       |        221 |         57 |         40 |        318 |
+| e:\dev\VulkanDumpster\src\vulkan\QueueFamilyUtils.cs       | C#       |        152 |        137 |         52 |        341 |
+| e:\dev\VulkanDumpster\src\vulkan\Renderer.cs               | C#       |        178 |          0 |         46 |        224 |
+| e:\dev\VulkanDumpster\src\vulkan\ShaderUtils.cs            | C#       |         47 |         20 |         11 |         78 |
+| e:\dev\VulkanDumpster\src\vulkan\SwapchainBuilder.cs       | C#       |        283 |         70 |         62 |        415 |
+| e:\dev\VulkanDumpster\src\vulkan\Vertex.cs                 | C#       |         35 |          0 |          5 |         40 |
+| e:\dev\VulkanDumpster\src\vulkan\VulkanBuffer.cs           | C#       |        110 |         11 |         31 |        152 |
+| e:\dev\VulkanDumpster\src\vulkan\VulkanCommandBuffer.cs    | C#       |         29 |          3 |          9 |         41 |
+| e:\dev\VulkanDumpster\src\vulkan\VulkanContext.cs          | C#       |         99 |          3 |         22 |        124 |
+| e:\dev\VulkanDumpster\src\vulkan\VulkanPipeline.cs         | C#       |         22 |          0 |          5 |         27 |
+| Total                                                      |          |        -65 |       -113 |         11 |       -167 |
++------------------------------------------------------------+----------+------------+------------+------------+------------+

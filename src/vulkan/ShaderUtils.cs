@@ -1,6 +1,8 @@
 using Silk.NET.Vulkan;
+using System;
+using System.IO;
 
-namespace Shiron.VulkanDumpster;
+namespace Shiron.VulkanDumpster.Vulkan;
 
 /// <summary>
 /// Utility functions for working with SPIR-V shader modules.

@@ -1,6 +1,6 @@
 using Silk.NET.Vulkan;
 
-namespace Shiron.VulkanDumpster;
+namespace Shiron.VulkanDumpster.Vulkan;
 
 /// <summary>
 /// Builder class to simplify the creation of Vulkan graphics pipelines.

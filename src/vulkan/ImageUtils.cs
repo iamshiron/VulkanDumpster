@@ -1,6 +1,6 @@
 using Silk.NET.Vulkan;
 
-namespace Shiron.VulkanDumpster;
+namespace Shiron.VulkanDumpster.Vulkan;
 
 /// <summary>
 /// Utility functions for working with Vulkan images.

@@ -1,6 +1,8 @@
 using Silk.NET.Vulkan;
+using System;
+using System.Collections.Generic;
 
-namespace Shiron.VulkanDumpster;
+namespace Shiron.VulkanDumpster.Vulkan;
 
 /// <summary>
 /// Provides utility functions for querying and retrieving queue family information

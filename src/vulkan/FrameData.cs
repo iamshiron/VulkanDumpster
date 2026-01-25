@@ -1,6 +1,6 @@
 using Silk.NET.Vulkan;
 
-namespace Shiron.VulkanDumpster;
+namespace Shiron.VulkanDumpster.Vulkan;
 
 /// <summary>
 /// Holds the structures needed to render a single frame.

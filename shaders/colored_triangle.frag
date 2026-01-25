@@ -1,11 +1,10 @@
 #version 450
 
-// Shader input (interpolated from vertex shader)
-layout (location = 0) in vec3 inColor;
+layout (location = 0) in vec2 inTexCoord;
 
-// Output write to color attachment
-layout (location = 0) out vec4 outFragColor;
+layout (location = 0) out vec4 outColor;
 
 void main() {
-    outFragColor = vec4(inColor, 1.0);
+    // Visualize texture coordinates as colors for testing
+    outColor = vec4(inTexCoord, 0.0, 1.0);
 }
