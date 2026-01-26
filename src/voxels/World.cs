@@ -8,23 +8,23 @@ using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Shiron.VulkanDumpster.Vulkan;
 using Shiron.VulkanDumpster;
+
 namespace Shiron.VulkanDumpster.Voxels;
 
 public class World : IDisposable {
     public int RenderDistance => _settings.RenderDistance;
-    public int ChunkCount => _chunks.Count;
+    public int ChunkCount { get; private set; }
     public int RenderedChunksCount { get; private set; }
     public int TotalRegionsCount => _regions.Count;
     public int RenderedRegionsCount { get; private set; }
     public int LastFrameUpdates { get; private set; }
 
-    private readonly ConcurrentDictionary<Vector2D<int>, YChunk> _chunks = new();
-    private readonly ConcurrentDictionary<Vector2D<int>, Region> _regions = new();
+    private readonly ChunkGrid _grid;
+    private readonly List<Region> _regionList = new();
+    private readonly ConcurrentDictionary<Vector2D<int>, Region> _regions = new(); 
     private readonly VulkanContext _ctx;
     private readonly Renderer _renderer;
     private readonly AppSettings _settings;
-    private readonly ConcurrentQueue<Vector2D<int>> _loadQueue = new();
-    private readonly ConcurrentQueue<Vector2D<int>> _unloadQueue = new();
     private Vector2D<int>? _lastCenterChunk;
     private readonly BatchUploader _batchUploader;
 
@@ -37,6 +37,7 @@ public class World : IDisposable {
         _renderer = renderer;
         _settings = settings;
         _batchUploader = new BatchUploader(_ctx, renderer);
+        _grid = new ChunkGrid(_settings.RenderDistance);
 
         // 256MB for vertices, 128MB for indices
         _chunkHeap = new ChunkHeap(_ctx, 256 * 1024 * 1024, 128 * 1024 * 1024);
@@ -49,35 +50,27 @@ public class World : IDisposable {
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
         }
     }
+
     public void Update(Vector3D<float> cameraPos) {
         var centerChunk = GetChunkPos((int) cameraPos.X, (int) cameraPos.Z);
         
         if (_lastCenterChunk != centerChunk) {
             _lastCenterChunk = centerChunk;
+            
+            // 1. Unload out-of-bounds chunks
+            foreach (var chunk in _grid.GetAllActive()) {
+                if (!IsInSquare(chunk.ChunkPos, centerChunk, RenderDistance)) {
+                    UnloadChunk(chunk.ChunkPos);
+                }
+            }
+
+            // 2. Load new chunks
             for (int x = -RenderDistance; x <= RenderDistance; x++) {
                 for (int z = -RenderDistance; z <= RenderDistance; z++) {
                     var pos = new Vector2D<int>(centerChunk.X + x, centerChunk.Y + z);
-                    if (!_chunks.ContainsKey(pos)) {
-                        GenerateChunk(pos);
+                    if (_grid.GetChunk(pos) == null) {
+                        LoadChunk(pos);
                     }
-                }
-            }
-            // Use _chunks directly here as this is a slow-path (boundary cross)
-            foreach (var chunkPos in _chunks.Keys) {
-                if (!IsInSquare(chunkPos, centerChunk, RenderDistance + 1)) {
-                    _unloadQueue.Enqueue(chunkPos);
-                }
-            }
-            while (_unloadQueue.TryDequeue(out var pos)) {
-                if (_chunks.TryRemove(pos, out var chunk)) {
-                    var regionPos = GetRegionPos(pos);
-                    if (_regions.TryGetValue(regionPos, out var region)) {
-                        region.RemoveChunk(chunk);
-                        if (region.IsEmpty) {
-                            _regions.TryRemove(regionPos, out _);
-                        }
-                    }
-                    chunk.Dispose(_chunkHeap);
                 }
             }
         }
@@ -86,12 +79,51 @@ public class World : IDisposable {
         const int MaxUploads = 32;
 
         _batchUploader.Begin();
-        // HOT PATH: Iterate Regions instead of all chunks
-        foreach (var region in _regions.Values) {
-            region.Update(_batchUploader, _chunkHeap, ref uploadedCount, MaxUploads);
+        // HOT PATH: Zero-allocation iteration
+        for (int i = 0; i < _regionList.Count; i++) {
+            _regionList[i].Update(_batchUploader, _chunkHeap, ref uploadedCount, MaxUploads);
         }
         _batchUploader.Flush();
         LastFrameUpdates = uploadedCount;
+    }
+
+    private void LoadChunk(Vector2D<int> pos) {
+        var chunk = new YChunk(_ctx, this, pos);
+        _grid.SetChunk(pos, chunk);
+        ChunkCount++;
+
+        var regionPos = GetRegionPos(pos);
+        var region = _regions.GetOrAdd(regionPos, p => {
+            var r = new Region(p);
+            lock (_regionList) {
+                _regionList.Add(r);
+            }
+            return r;
+        });
+        region.AddChunk(chunk);
+
+        Task.Run(() => GenerateTerrain(chunk, pos));
+    }
+
+    private void UnloadChunk(Vector2D<int> pos) {
+        var chunk = _grid.GetChunk(pos);
+        if (chunk != null) {
+            _grid.SetChunk(pos, null);
+            ChunkCount--;
+
+            var regionPos = GetRegionPos(pos);
+            if (_regions.TryGetValue(regionPos, out var region)) {
+                region.RemoveChunk(chunk);
+                if (region.IsEmpty) {
+                    if (_regions.TryRemove(regionPos, out _)) {
+                        lock (_regionList) {
+                            _regionList.Remove(region);
+                        }
+                    }
+                }
+            }
+            chunk.Dispose(_chunkHeap);
+        }
     }
 
     private bool IsInSquare(Vector2D<int> pos, Vector2D<int> center, int radius) {
@@ -99,39 +131,23 @@ public class World : IDisposable {
                Math.Abs(pos.Y - center.Y) <= radius;
     }
 
-    private void GenerateChunk(Vector2D<int> chunkPos) {
-        var chunk = new YChunk(_ctx, this, chunkPos);
-        if (_chunks.TryAdd(chunkPos, chunk)) {
-            var regionPos = GetRegionPos(chunkPos);
-            var region = _regions.GetOrAdd(regionPos, pos => new Region(pos));
-            region.AddChunk(chunk);
-
-            Task.Run(() => GenerateTerrain(chunk, chunkPos));
-        } else {
-            chunk.Dispose();
-        }
-    }
-
     private void OnChunkGenerated(Vector2D<int> chunkPos) {
         UpdateNeighbor(chunkPos.X + 1, chunkPos.Y);
         UpdateNeighbor(chunkPos.X - 1, chunkPos.Y);
         UpdateNeighbor(chunkPos.X, chunkPos.Y + 1);
         UpdateNeighbor(chunkPos.X, chunkPos.Y - 1);
-        if (_chunks.TryGetValue(chunkPos, out var chunk)) {
-            chunk.MarkDirty();
-        }
+        var chunk = _grid.GetChunk(chunkPos);
+        chunk?.MarkDirty();
     }
 
     private void UpdateNeighbor(int x, int z) {
-        if (_chunks.TryGetValue(new Vector2D<int>(x, z), out var neighbor)) {
-            neighbor.MarkDirty();
-        }
+        var neighbor = _grid.GetChunk(new Vector2D<int>(x, z));
+        neighbor?.MarkDirty();
     }
 
     private unsafe void GenerateTerrain(YChunk chunk, Vector2D<int> chunkPos) {
         int baseX = chunkPos.X * Chunk.Size;
         int baseZ = chunkPos.Y * Chunk.Size;
-        
         int totalBlockCount = Chunk.Size * Chunk.Size * YChunk.TotalHeight;
         BlockType* columnBlocks = (BlockType*)UnmanagedPool.Rent((nuint)(totalBlockCount * sizeof(BlockType)));
         System.Runtime.CompilerServices.Unsafe.InitBlock(columnBlocks, 0, (uint)(totalBlockCount * sizeof(BlockType)));
@@ -155,10 +171,8 @@ public class World : IDisposable {
                     }
                 }
             }
-            
             for (int i = 0; i < YChunk.HeightInChunks; i++) {
-                BlockType* subChunkPtr = columnBlocks + (i * Chunk.BlockCount);
-                chunk.SetChunkBlocks(i, subChunkPtr);
+                chunk.SetChunkBlocks(i, columnBlocks + (i * Chunk.BlockCount));
             }
         } finally {
             UnmanagedPool.Return(columnBlocks, (nuint)(totalBlockCount * sizeof(BlockType)));
@@ -169,51 +183,50 @@ public class World : IDisposable {
     public void SetBlock(int x, int y, int z, BlockType type) {
         if (y < 0 || y >= YChunk.TotalHeight) return;
         var chunkPos = GetChunkPos(x, z);
-        if (_chunks.TryGetValue(chunkPos, out var chunk)) {
-            int localX = Mod(x, Chunk.Size);
-            int localZ = Mod(z, Chunk.Size);
-            chunk.SetBlock(localX, y, localZ, type);
+        var chunk = _grid.GetChunk(chunkPos);
+        if (chunk != null) {
+            chunk.SetBlock(Mod(x, Chunk.Size), y, Mod(z, Chunk.Size), type);
         }
     }
+
     public BlockType GetBlock(int x, int y, int z) {
         if (y < 0 || y >= YChunk.TotalHeight) return BlockType.Air;
         var chunkPos = GetChunkPos(x, z);
-        if (_chunks.TryGetValue(chunkPos, out var chunk)) {
-            int localX = Mod(x, Chunk.Size);
-            int localZ = Mod(z, Chunk.Size);
-            return chunk.GetBlock(localX, y, localZ);
+        var chunk = _grid.GetChunk(chunkPos);
+        if (chunk != null) {
+            return chunk.GetBlock(Mod(x, Chunk.Size), y, Mod(z, Chunk.Size));
         }
         return BlockType.Air;
     }
+
     private Vector2D<int> GetChunkPos(int x, int z) {
         return new Vector2D<int>(
             (int) MathF.Floor((float) x / Chunk.Size),
             (int) MathF.Floor((float) z / Chunk.Size)
         );
     }
+
     private Vector2D<int> GetRegionPos(Vector2D<int> chunkPos) {
         return new Vector2D<int>(
             (int) MathF.Floor((float) chunkPos.X / Region.SizeInChunks),
             (int) MathF.Floor((float) chunkPos.Y / Region.SizeInChunks)
         );
     }
+
     private int Mod(int n, int m) {
         return ((n % m) + m) % m;
     }
+
     public unsafe void Render(VulkanCommandBuffer cmd, VulkanPipeline pipeline, DescriptorSet descriptorSet, Frustum frustum) {
         Profiler.Begin("World Render Loop");
         _indirectCommands.Clear();
         
         int rendered = 0;
         int renderedRegions = 0;
-        // HOT PATH: Render via Regions (Hierarchical Culling)
-        foreach (var region in _regions.Values) {
-            float minX = region.RegionPos.X * Region.SizeInBlocks;
-            float minZ = region.RegionPos.Y * Region.SizeInBlocks;
-            var min = new Vector3D<float>(minX, 0, minZ);
-            var max = new Vector3D<float>(minX + Region.SizeInBlocks, YChunk.TotalHeight, minZ + Region.SizeInBlocks);
-            
-            if (frustum.IsBoxVisible(min, max)) {
+        // HOT PATH: Zero-allocation hierarchical culling
+        for (int i = 0; i < _regionList.Count; i++) {
+            var region = _regionList[i];
+            if (frustum.IsBoxVisible(region.Min, region.Max)) {
                 renderedRegions++;
                 region.Render(_indirectCommands, frustum, ref rendered);
             }
@@ -224,7 +237,6 @@ public class World : IDisposable {
         if (_indirectCommands.Count > 0) {
             int frameIndex = _renderer.CurrentFrameIndex;
             var indirectBuffer = _indirectBuffers[frameIndex];
-            
             var span = CollectionsMarshal.AsSpan(_indirectCommands);
             ulong requiredSize = (ulong)(span.Length * Marshal.SizeOf<DrawIndexedIndirectCommand>());
             
@@ -247,8 +259,9 @@ public class World : IDisposable {
 
         Profiler.End("World Render Loop");
     }
+
     public void Dispose() {
-        foreach (var chunk in _chunks.Values) {
+        foreach (var chunk in _grid.GetAllActive()) {
             chunk.Dispose(_chunkHeap);
         }
         _chunkHeap.Dispose();

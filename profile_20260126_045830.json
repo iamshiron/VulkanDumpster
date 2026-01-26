@@ -1,0 +1,74 @@
+{
+  "Timestamp": "2026-01-26T04:58:30.0243942+01:00",
+  "Frame": {
+    "DeltaTime": 0.0006198,
+    "AverageFPS": 3291.4656,
+    "MedianFPS": 3352.067,
+    "MinFPS": 3156.8176,
+    "MaxFPS": 3423.9758,
+    "Low1PercentFPS": 3158.6443,
+    "Low01PercentFPS": 3157.8333,
+    "CameraPosition": {},
+    "TotalChunks": 8712,
+    "RenderedChunks": 241,
+    "TotalRegions": 25,
+    "RenderedRegions": 11,
+    "ChunkUpdates": 0
+  },
+  "CpuStats": {
+    "World Update": {
+      "AverageMs": 0.06513333333333333,
+      "PeakMs": 2.8785999999999996
+    },
+    "Begin Frame": {
+      "AverageMs": 0.06665666666666666,
+      "PeakMs": 6.5788
+    },
+    "World Render Loop": {
+      "AverageMs": 0.020006666666666666,
+      "PeakMs": 0.2716
+    },
+    "World Render": {
+      "AverageMs": 0.02760166666666667,
+      "PeakMs": 0.2788
+    },
+    "Text Render": {
+      "AverageMs": 0.00010333333333333337,
+      "PeakMs": 0.0303
+    },
+    "End Frame": {
+      "AverageMs": 0.12772666666666668,
+      "PeakMs": 2.1324
+    },
+    "Total Frame": {
+      "AverageMs": 0.29203666666666683,
+      "PeakMs": 7.8493
+    }
+  },
+  "GpuTimesMs": {
+    "Main Pass": 0.041984
+  },
+  "Vulkan": {
+    "DrawCalls": 1,
+    "PipelineBinds": 1,
+    "DescriptorSetBinds": 1,
+    "VertexBufferBinds": 1,
+    "IndexBufferBinds": 1,
+    "PushConstants": 1
+  },
+  "Memory": {
+    "WorkingSetMB": 1599.71875,
+    "PrivateMemoryMB": 2109.6875,
+    "ManagedMemoryMB": 695.1400985717773,
+    "TotalAllocatedBytes": 24091023432,
+    "Gen0Collections": 1502,
+    "Gen1Collections": 44,
+    "Gen2Collections": 7,
+    "HeapSizeMB": 721,
+    "TotalCommittedMB": 742,
+    "PromotionRateMB": 0
+  },
+  "ShaderExecutions": {
+    "WorldSolid": 241
+  }
+}

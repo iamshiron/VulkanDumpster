@@ -10,9 +10,10 @@ public class Region {
     public const int SizeInBlocks = SizeInChunks * Chunk.Size;
     
     public Vector2D<int> RegionPos { get; }
+    public Vector3D<float> Min => _min;
+    public Vector3D<float> Max => _max;
+    
     private readonly List<YChunk> _chunks = new();
-    public IReadOnlyList<YChunk> Chunks => _chunks;
-
     private Vector3D<float> _min;
     private Vector3D<float> _max;
 

@@ -12,7 +12,10 @@ public class YChunk : IDisposable {
     public const int HeightInChunks = 8; // Total height: 8 * 32 = 256 blocks
     public const int TotalHeight = HeightInChunks * Chunk.Size;
     private readonly Chunk[] _chunks = new Chunk[HeightInChunks];
+    public Vector2D<int> ChunkPos => _chunkPos;
     private readonly Vector2D<int> _chunkPos; // X, Z position in chunk coordinates
+    private readonly Vector3D<float> _min;
+    private readonly Vector3D<float> _max;
 
     private readonly Mesh _combinedMesh;
     private readonly List<Vertex>[] _subChunkVertices = new List<Vertex>[HeightInChunks];
@@ -26,6 +29,12 @@ public class YChunk : IDisposable {
         _chunkPos = chunkPos;
         _world = world;
         _combinedMesh = new Mesh(ctx);
+        
+        float minX = _chunkPos.X * Chunk.Size;
+        float minZ = _chunkPos.Y * Chunk.Size;
+        _min = new Vector3D<float>(minX, 0, minZ);
+        _max = new Vector3D<float>(minX + Chunk.Size, TotalHeight, minZ + Chunk.Size);
+
         for (int y = 0; y < HeightInChunks; y++) {
             var worldPos = new Vector3D<float>(chunkPos.X * Chunk.Size, y * Chunk.Size, chunkPos.Y * Chunk.Size);
             _chunks[y] = new Chunk(ctx, world, worldPos);
@@ -115,12 +124,7 @@ public class YChunk : IDisposable {
     public void CollectIndirectCommands(List<DrawIndexedIndirectCommand> commands, Frustum frustum, ref int renderedCount) {
         if (_combinedMesh.IndexCount == 0 || !_combinedMesh.HasAllocation) return;
 
-        float minX = _chunkPos.X * Chunk.Size;
-        float minZ = _chunkPos.Y * Chunk.Size;
-        var colMin = new Vector3D<float>(minX, 0, minZ);
-        var colMax = new Vector3D<float>(minX + Chunk.Size, TotalHeight, minZ + Chunk.Size);
-        
-        if (!frustum.IsBoxVisible(colMin, colMax)) return;
+        if (!frustum.IsBoxVisible(_min, _max)) return;
 
         commands.Add(new DrawIndexedIndirectCommand {
             IndexCount = (uint)_combinedMesh.IndexCount,
