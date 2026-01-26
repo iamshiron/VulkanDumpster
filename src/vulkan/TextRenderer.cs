@@ -19,7 +19,7 @@ public unsafe class TextRenderer : IDisposable {
     private DescriptorPool _descriptorPool;
     private DescriptorSet _descriptorSet;
     private VulkanPipeline _pipeline;
-    private VulkanBuffer _vertexBuffer;
+    private readonly VulkanBuffer[] _vertexBuffers;
     
     private readonly Dictionary<char, Character> _characters = new();
     private readonly List<TextVertex> _vertices = new();
@@ -78,6 +78,7 @@ public unsafe class TextRenderer : IDisposable {
     public TextRenderer(VulkanContext ctx, Renderer renderer, string fontPath, float fontSize) {
         _ctx = ctx;
         _renderer = renderer;
+        _vertexBuffers = new VulkanBuffer[3];
         
         InitFont(fontPath, fontSize);
         InitResources();
@@ -124,9 +125,6 @@ public unsafe class TextRenderer : IDisposable {
             float v1 = pc.y1 / (float)atlasHeight;
             
             // Calculate Size/Bearing
-            // xoff, yoff are offsets from the current pen position to the top-left of the glyph bitmap
-            // xoff2, yoff2 are offsets to the bottom-right
-            
             float w = pc.x1 - pc.x0;
             float h = pc.y1 - pc.y0;
             
@@ -134,7 +132,7 @@ public unsafe class TextRenderer : IDisposable {
                 TexCoordMin = new Vector2D<float>(u0, v0),
                 TexCoordMax = new Vector2D<float>(u1, v1),
                 Size = new Vector2D<float>(w, h),
-                Bearing = new Vector2D<float>(pc.xoff, pc.yoff), // StbTrueType uses top-down Y usually?
+                Bearing = new Vector2D<float>(pc.xoff, pc.yoff),
                 Advance = pc.xadvance
             };
             _characters.Add(c, charInfo);
@@ -240,18 +238,20 @@ public unsafe class TextRenderer : IDisposable {
         _ctx.Vk.UpdateDescriptorSets(_ctx.Device, 1, &write, 0, null);
 
         // 5. Vertex Buffer
-        CreateBuffer(InitialVertexCapacity);
+        CreateBuffers(InitialVertexCapacity);
     }
     
-    private void CreateBuffer(int capacity) {
-        var oldBuffer = _vertexBuffer;
-        if (oldBuffer != null) {
-            _ctx.EnqueueDispose(() => oldBuffer.Dispose());
+    private void CreateBuffers(int capacity) {
+        for (int i = 0; i < _vertexBuffers.Length; i++) {
+            var oldBuffer = _vertexBuffers[i];
+            if (oldBuffer != null) {
+                _ctx.EnqueueDispose(() => oldBuffer.Dispose());
+            }
+            _vertexBuffers[i] = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
+                (ulong) (capacity * Unsafe.SizeOf<TextVertex>()),
+                BufferUsageFlags.VertexBufferBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
         }
-        _vertexBuffer = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
-            (ulong) (capacity * Unsafe.SizeOf<TextVertex>()),
-            BufferUsageFlags.VertexBufferBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
     }
 
     public void Begin() {
@@ -263,15 +263,8 @@ public unsafe class TextRenderer : IDisposable {
             if (!_characters.TryGetValue(c, out var ch))
                 continue;
 
-            // StbTrueType packed data coordinates:
-            // Bearing (xoff, yoff) is offset from current point to top-left of glyph.
-            // yoff is positive downwards usually in StbTrueType default config.
-            
             float qX = x + ch.Bearing.X * scale;
-            float qY = y + ch.Bearing.Y * scale; // Assuming y is baseline and yoff is negative for up? 
-                                                 // Wait, Stbtt yoff is usually from top-left.
-                                                 // Actually Stbtt packs for rendering "at current point".
-                                                 // Let's test assumption: qX, qY is the quad top-left.
+            float qY = y + ch.Bearing.Y * scale;
             
             float w = ch.Size.X * scale;
             float h = ch.Size.Y * scale;
@@ -297,19 +290,23 @@ public unsafe class TextRenderer : IDisposable {
     public void Render(VulkanCommandBuffer cmd, Vector2D<int> screenSize, Vector4 color) {
         if (_vertices.Count == 0) return;
 
+        int frameIndex = _renderer.CurrentFrameIndex;
+        var buffer = _vertexBuffers[frameIndex];
+
         ulong requiredSize = (ulong) (_vertices.Count * Unsafe.SizeOf<TextVertex>());
-        if (_vertexBuffer.Size < requiredSize) {
-            CreateBuffer(_vertices.Count * 2);
+        if (buffer.Size < requiredSize) {
+            CreateBuffers(_vertices.Count * 2);
+            buffer = _vertexBuffers[frameIndex];
         }
 
         var span = CollectionsMarshal.AsSpan(_vertices);
         fixed (TextVertex* pData = span) {
-            System.Buffer.MemoryCopy(pData, _vertexBuffer.MappedData, requiredSize, requiredSize);
+            System.Buffer.MemoryCopy(pData, buffer.MappedData, requiredSize, requiredSize);
         }
 
         cmd.BindPipeline(_pipeline);
         cmd.BindDescriptorSets(_pipeline, new[] { _descriptorSet });
-        cmd.BindVertexBuffer(_vertexBuffer);
+        cmd.BindVertexBuffer(buffer);
 
         var ortho = Matrix4X4.CreateOrthographicOffCenter(0f, (float)screenSize.X, 0f, (float)screenSize.Y, -1f, 1f);
         
@@ -323,7 +320,7 @@ public unsafe class TextRenderer : IDisposable {
     public void Dispose() {
         _pipeline?.Dispose();
         _fontTexture?.Dispose();
-        _vertexBuffer?.Dispose();
+        foreach (var vb in _vertexBuffers) vb?.Dispose();
         if (_descriptorSetLayout.Handle != 0)
             _ctx.Vk.DestroyDescriptorSetLayout(_ctx.Device, _descriptorSetLayout, null);
         if (_descriptorPool.Handle != 0)

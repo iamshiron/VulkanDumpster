@@ -19,6 +19,7 @@ public unsafe class VulkanContext : IDisposable {
     public uint GraphicsQueueFamily { get; private set; }
     public QueueFamilyIndices QueueFamilies { get; private set; }
     public CommandPool CommandPool { get; private set; }
+    public BufferPool BufferPool { get; private set; }
     // Deletion Queue for deferred resource cleanup
     public readonly System.Collections.Concurrent.ConcurrentQueue<Action> DeletionQueue = new();
     private InstanceBuilder _instanceBuilder = null!;
@@ -32,6 +33,7 @@ public unsafe class VulkanContext : IDisposable {
         InitSurface();
         InitDevice();
         InitCommandPool();
+        BufferPool = new BufferPool(this);
     }
     public void EnqueueDispose(Action disposeAction) {
         DeletionQueue.Enqueue(disposeAction);
@@ -99,6 +101,7 @@ public unsafe class VulkanContext : IDisposable {
         CommandPool = pool;
     }
     public void Dispose() {
+        BufferPool?.Dispose();
         if (CommandPool.Handle != 0) {
             Vk.DestroyCommandPool(Device, CommandPool, null);
         }

@@ -14,12 +14,16 @@ public unsafe class VulkanBuffer : IDisposable {
     public Buffer Handle { get; private set; }
     public DeviceMemory Memory { get; private set; }
     public ulong Size { get; private set; }
+    public BufferUsageFlags Usage { get; private set; }
+    public MemoryPropertyFlags MemoryProperties { get; private set; }
     public void* MappedData { get; private set; }
     public VulkanBuffer(Vk vk, Device device, PhysicalDevice physicalDevice, ulong size, BufferUsageFlags usage, MemoryPropertyFlags properties) {
         _vk = vk;
         _device = device;
         _physicalDevice = physicalDevice;
         Size = size;
+        Usage = usage;
+        MemoryProperties = properties;
         CreateBuffer(size, usage, properties, out var buffer, out var memory);
         Handle = buffer;
         Memory = memory;

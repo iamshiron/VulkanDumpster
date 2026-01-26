@@ -24,6 +24,13 @@ public class YChunk : IDisposable {
         int localY = y % Chunk.Size;
         _chunks[chunkY].SetBlock(x, localY, z, type);
     }
+    
+    public void SetChunkBlocks(int chunkIndex, BlockType[] blocks) {
+        if (chunkIndex >= 0 && chunkIndex < HeightInChunks) {
+            _chunks[chunkIndex].SetBlocks(blocks);
+        }
+    }
+
     public BlockType GetBlock(int x, int y, int z) {
         if (y < 0 || y >= TotalHeight) return BlockType.Air;
         int chunkY = y / Chunk.Size;
@@ -41,7 +48,18 @@ public class YChunk : IDisposable {
             _chunks[i].Update();
         }
     }
-    public void Render(VulkanCommandBuffer cmd, VulkanPipeline pipeline, DescriptorSet descriptorSet, Frustum frustum) {
+    
+    public void UploadPendingMeshes(BatchUploader uploader, ref int uploadedCount, int maxUploads) {
+        for (int i = 0; i < HeightInChunks; i++) {
+            if (uploadedCount >= maxUploads) return;
+            if (_chunks[i].HasPendingUpload) {
+                _chunks[i].UploadToGpu(uploader);
+                uploadedCount++;
+            }
+        }
+    }
+
+    public void Render(VulkanCommandBuffer cmd, VulkanPipeline pipeline, DescriptorSet descriptorSet, Frustum frustum, ref int renderedCount) {
         // 1. Cull the entire column first
         float minX = _chunkPos.X * Chunk.Size;
         float minZ = _chunkPos.Y * Chunk.Size;
@@ -65,6 +83,7 @@ public class YChunk : IDisposable {
             cmd.PushConstants(pipeline, ShaderStageFlags.VertexBit, pc);
             chunk.Mesh.Bind(cmd);
             cmd.DrawIndexed((uint) chunk.Mesh.IndexCount);
+            renderedCount++;
         }
     }
     public void Dispose() {

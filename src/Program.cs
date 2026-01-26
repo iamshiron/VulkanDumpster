@@ -65,7 +65,7 @@ public class Program {
             new DescriptorPoolSize(DescriptorType.UniformBuffer, 3),
             new DescriptorPoolSize(DescriptorType.CombinedImageSampler, 3));
         CreateTextureArray();
-        _world = new World(_context);
+        _world = new World(_context, _renderer);
         CreateUniformBuffers();
         CreatePipelines();
         _debugRenderer = new DebugRenderer(_context, _renderer, _descriptorSetLayout);
@@ -199,8 +199,10 @@ public class Program {
         // Draw Text
         _textRenderer.Begin();
         _textRenderer.DrawText($"FPS: {1.0/delta:F1}", 10, 30, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.DrawText($"Chunks: {_world.ChunkCount}", 10, 55, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.DrawText($"Pos: {_camera.Position.X:F1}, {_camera.Position.Y:F1}, {_camera.Position.Z:F1}", 10, 80, 1.0f, new Vector4(1, 1, 1, 1));
+        _textRenderer.DrawText($"Total Chunks: {_world.ChunkCount * YChunk.HeightInChunks}", 10, 55, 1.0f, new Vector4(1, 1, 1, 1));
+        _textRenderer.DrawText($"Rendered: {_world.RenderedChunksCount}", 10, 80, 1.0f, new Vector4(1, 1, 1, 1));
+        _textRenderer.DrawText($"Updates: {_world.LastFrameUpdates}", 10, 105, 1.0f, new Vector4(1, 1, 1, 1));
+        _textRenderer.DrawText($"Pos: {_camera.Position.X:F1}, {_camera.Position.Y:F1}, {_camera.Position.Z:F1}", 10, 130, 1.0f, new Vector4(1, 1, 1, 1));
         _textRenderer.Render(cmd, new Vector2D<int>((int)_renderer.SwapchainExtent.Width, (int)_renderer.SwapchainExtent.Height), new Vector4(1, 1, 1, 1));
 
         _renderer.EndFrame();

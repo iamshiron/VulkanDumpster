@@ -9,7 +9,7 @@ public unsafe class DebugRenderer : IDisposable {
     private readonly VulkanContext _ctx;
     private readonly Renderer _renderer;
     private VulkanPipeline _pipeline;
-    private VulkanBuffer _vertexBuffer;
+    private VulkanBuffer[] _vertexBuffers;
     private const int InitialVertexCapacity = 10000;
     private readonly List<DebugVertex> _vertices = new();
     private struct DebugVertex {
@@ -46,8 +46,9 @@ public unsafe class DebugRenderer : IDisposable {
     public DebugRenderer(VulkanContext ctx, Renderer renderer, DescriptorSetLayout globalLayout) {
         _ctx = ctx;
         _renderer = renderer;
+        _vertexBuffers = new VulkanBuffer[3];
         CreatePipeline(globalLayout);
-        CreateBuffer(InitialVertexCapacity);
+        CreateBuffers(InitialVertexCapacity);
     }
     private void CreatePipeline(DescriptorSetLayout globalLayout) {
         ShaderUtils.LoadShaderModule(_ctx.Vk, _ctx.Device, "shaders/debug_line.vert.spv", out var vert);
@@ -81,15 +82,17 @@ public unsafe class DebugRenderer : IDisposable {
         _ctx.Vk.DestroyShaderModule(_ctx.Device, vert, null);
         _ctx.Vk.DestroyShaderModule(_ctx.Device, frag, null);
     }
-    private void CreateBuffer(int capacity) {
-        var oldBuffer = _vertexBuffer;
-        if (oldBuffer != null) {
-            _ctx.EnqueueDispose(() => oldBuffer.Dispose());
+    private void CreateBuffers(int capacity) {
+        for (int i = 0; i < _vertexBuffers.Length; i++) {
+            var oldBuffer = _vertexBuffers[i];
+            if (oldBuffer != null) {
+                _ctx.EnqueueDispose(() => oldBuffer.Dispose());
+            }
+            _vertexBuffers[i] = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
+                (ulong) (capacity * Unsafe.SizeOf<DebugVertex>()),
+                BufferUsageFlags.VertexBufferBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
         }
-        _vertexBuffer = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
-            (ulong) (capacity * Unsafe.SizeOf<DebugVertex>()),
-            BufferUsageFlags.VertexBufferBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
     }
     public void Begin() {
         _vertices.Clear();
@@ -118,14 +121,18 @@ public unsafe class DebugRenderer : IDisposable {
     public void Render(VulkanCommandBuffer cmd, DescriptorSet descriptorSet) {
         if (_vertices.Count == 0) return;
         // Resize if needed
+        int frameIndex = _renderer.CurrentFrameIndex;
+        var buffer = _vertexBuffers[frameIndex];
+
         ulong requiredSize = (ulong) (_vertices.Count * Unsafe.SizeOf<DebugVertex>());
-        if (_vertexBuffer.Size < requiredSize) {
-            CreateBuffer(_vertices.Count * 2); // Grow
+        if (buffer.Size < requiredSize) {
+            CreateBuffers(_vertices.Count * 2); // Grow all
+            buffer = _vertexBuffers[frameIndex];
         }
         // Upload
         var span = CollectionsMarshal.AsSpan(_vertices);
         fixed (DebugVertex* pData = span) {
-            System.Buffer.MemoryCopy(pData, _vertexBuffer.MappedData, requiredSize, requiredSize);
+            System.Buffer.MemoryCopy(pData, buffer.MappedData, requiredSize, requiredSize);
         }
         cmd.BindPipeline(_pipeline, PipelineBindPoint.Graphics);
         // We reuse the global UBO descriptor set for ViewProj
@@ -133,15 +140,14 @@ public unsafe class DebugRenderer : IDisposable {
         // Identity model matrix
         var pc = Matrix4X4<float>.Identity;
         cmd.PushConstants(_pipeline, ShaderStageFlags.VertexBit, pc);
-        cmd.BindVertexBuffer(_vertexBuffer);
+        cmd.BindVertexBuffer(buffer);
         _ctx.Vk.CmdDraw(cmd.Handle, (uint) _vertices.Count, 1, 0, 0);
     }
     public void Dispose() {
         var p = _pipeline;
-        var vb = _vertexBuffer;
         _ctx.EnqueueDispose(() => {
             p?.Dispose();
-            vb?.Dispose();
+            foreach (var vb in _vertexBuffers) vb?.Dispose();
         });
     }
 }

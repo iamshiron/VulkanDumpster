@@ -42,6 +42,15 @@ public class Chunk {
             }
         }
     }
+    
+    public void SetBlocks(BlockType[] newBlocks) {
+        if (newBlocks.Length != Blocks.Length) return;
+        lock (_blockLock) {
+            Array.Copy(newBlocks, Blocks, Blocks.Length);
+            IsMeshDirty = true;
+        }
+    }
+
     public BlockType GetBlock(int x, int y, int z) {
         if (x < 0 || x >= Size || y < 0 || y >= Size || z < 0 || z >= Size) return BlockType.Air;
         lock (_blockLock) {
@@ -54,10 +63,13 @@ public class Chunk {
     public void MarkDirty() {
         IsMeshDirty = true;
     }
-    public void Update() {
+    
+    public bool HasPendingUpload => _hasPendingMesh;
+
+    public void UploadToGpu(BatchUploader uploader) {
         if (_hasPendingMesh) {
             var (oldV, oldI) = Mesh.SetData(_pendingVertices, _pendingIndices);
-            Mesh.UpdateGpuBuffers();
+            Mesh.UpdateGpuBuffers(uploader);
             
             // Recycle the old lists
             if (oldV != null) _vertexListPool.Enqueue(oldV);
@@ -67,6 +79,9 @@ public class Chunk {
             _pendingVertices = null!;
             _pendingIndices = null!;
         }
+    }
+
+    public void Update() {
         if (IsMeshDirty && !_isMeshing) {
             _isMeshing = true;
             IsMeshDirty = false;
@@ -89,6 +104,26 @@ public class Chunk {
         }
     }
     private void BuildMeshTask(BlockType[] blocks) {
+        // 1. Snapshot neighbors into a local 34x34x34 array to avoid dictionary lookups in tight loops
+        const int Padding = 1;
+        const int PaddedSize = Size + 2 * Padding;
+        var paddedBlocks = new BlockType[PaddedSize * PaddedSize * PaddedSize];
+
+        // Fill padded blocks
+        for (int y = -1; y <= Size; y++) {
+            for (int z = -1; z <= Size; z++) {
+                for (int x = -1; x <= Size; x++) {
+                    BlockType type;
+                    if (x >= 0 && x < Size && y >= 0 && y < Size && z >= 0 && z < Size) {
+                        type = blocks[x + (y * Size) + (z * Size * Size)];
+                    } else {
+                        type = _world.GetBlock((int)Position.X + x, (int)Position.Y + y, (int)Position.Z + z);
+                    }
+                    paddedBlocks[(x + Padding) + (y + Padding) * PaddedSize + (z + Padding) * PaddedSize * PaddedSize] = type;
+                }
+            }
+        }
+
         // Get lists from pool
         if (!_vertexListPool.TryDequeue(out var vertices)) vertices = new List<Vertex>();
         else vertices.Clear();
@@ -98,23 +133,16 @@ public class Chunk {
 
         int vertexCount = 0;
 
-        // Local helper to avoid lock overhead and use snapshot
+        // Local helper using padded array
         BlockType GetBlockLocal(int x, int y, int z) {
-            if (x < 0 || x >= Size || y < 0 || y >= Size || z < 0 || z >= Size) {
-                // Check neighbor via World
-                int worldX = (int) Position.X + x;
-                int worldY = (int) Position.Y + y;
-                int worldZ = (int) Position.Z + z;
-                return _world.GetBlock(worldX, worldY, worldZ);
-            }
-            return blocks[x + (y * Size) + (z * Size * Size)];
+            return paddedBlocks[(x + Padding) + (y + Padding) * PaddedSize + (z + Padding) * PaddedSize * PaddedSize];
         }
 
         bool IsTransparentLocal(int x, int y, int z) {
             return GetBlockLocal(x, y, z) == BlockType.Air;
         }
 
-        // Helper to mesh a slice
+        // ... rest of meshing logic ...
         // axis1: inner loop dimension (width)
         // axis2: outer loop dimension (height)
         // sliceAxis: the dimension we are slicing through
