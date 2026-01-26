@@ -1,7 +1,5 @@
 using Silk.NET.Vulkan;
-
 namespace Shiron.VulkanDumpster.Vulkan;
-
 /// <summary>
 /// Builder class to simplify the creation of Vulkan graphics pipelines.
 /// Uses dynamic rendering (no render pass) to reduce boilerplate for learning.
@@ -9,7 +7,6 @@ namespace Shiron.VulkanDumpster.Vulkan;
 public class PipelineBuilder {
     private readonly Vk _vk;
     private readonly List<PipelineShaderStageCreateInfo> _shaderStages = new();
-
     private PipelineInputAssemblyStateCreateInfo _inputAssembly;
     private PipelineRasterizationStateCreateInfo _rasterizer;
     private PipelineColorBlendAttachmentState _colorBlendAttachment;
@@ -17,73 +14,62 @@ public class PipelineBuilder {
     private PipelineDepthStencilStateCreateInfo _depthStencil;
     private PipelineRenderingCreateInfo _renderInfo;
     private Format _colorAttachmentFormat;
-
+    private VertexInputBindingDescription _bindingDescription;
+    private VertexInputAttributeDescription[] _attributeDescriptions;
     /// <summary>
     /// The pipeline layout that controls inputs/outputs of the shader.
     /// Must be set before building the pipeline.
     /// </summary>
     public PipelineLayout PipelineLayout { get; set; }
-
     public PipelineBuilder(Vk vk) {
         _vk = vk;
         Clear();
     }
-
     /// <summary>
     /// Reset all state to defaults.
     /// </summary>
     public void Clear() {
         _shaderStages.Clear();
-
         _inputAssembly = new PipelineInputAssemblyStateCreateInfo {
             SType = StructureType.PipelineInputAssemblyStateCreateInfo
         };
-
         _rasterizer = new PipelineRasterizationStateCreateInfo {
             SType = StructureType.PipelineRasterizationStateCreateInfo
         };
-
         _colorBlendAttachment = new PipelineColorBlendAttachmentState();
-
         _multisampling = new PipelineMultisampleStateCreateInfo {
             SType = StructureType.PipelineMultisampleStateCreateInfo
         };
-
         _depthStencil = new PipelineDepthStencilStateCreateInfo {
             SType = StructureType.PipelineDepthStencilStateCreateInfo
         };
-
         _renderInfo = new PipelineRenderingCreateInfo {
             SType = StructureType.PipelineRenderingCreateInfo
         };
-
         _colorAttachmentFormat = Format.Undefined;
         PipelineLayout = default;
+        _bindingDescription = Vertex.GetBindingDescription();
+        _attributeDescriptions = Vertex.GetAttributeDescriptions();
     }
-
     /// <summary>
     /// Set the vertex and fragment shaders for the pipeline.
     /// </summary>
     public unsafe PipelineBuilder SetShaders(ShaderModule vertexShader, ShaderModule fragmentShader) {
         _shaderStages.Clear();
-
         _shaderStages.Add(new PipelineShaderStageCreateInfo {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.VertexBit,
             Module = vertexShader,
             PName = (byte*) System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi("main")
         });
-
         _shaderStages.Add(new PipelineShaderStageCreateInfo {
             SType = StructureType.PipelineShaderStageCreateInfo,
             Stage = ShaderStageFlags.FragmentBit,
             Module = fragmentShader,
             PName = (byte*) System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi("main")
         });
-
         return this;
     }
-
     /// <summary>
     /// Set the input topology (triangle list, point list, line list, etc.).
     /// </summary>
@@ -92,7 +78,6 @@ public class PipelineBuilder {
         _inputAssembly.PrimitiveRestartEnable = false;
         return this;
     }
-
     /// <summary>
     /// Set the polygon mode (fill, line/wireframe, point).
     /// </summary>
@@ -101,7 +86,6 @@ public class PipelineBuilder {
         _rasterizer.LineWidth = 1.0f;
         return this;
     }
-
     /// <summary>
     /// Set the culling mode and front face winding order.
     /// </summary>
@@ -110,7 +94,6 @@ public class PipelineBuilder {
         _rasterizer.FrontFace = frontFace;
         return this;
     }
-
     /// <summary>
     /// Disable multisampling (1 sample per pixel).
     /// </summary>
@@ -123,7 +106,6 @@ public class PipelineBuilder {
         _multisampling.AlphaToOneEnable = false;
         return this;
     }
-
     /// <summary>
     /// Disable blending - writes color directly without any blending operations.
     /// </summary>
@@ -136,7 +118,6 @@ public class PipelineBuilder {
         _colorBlendAttachment.BlendEnable = false;
         return this;
     }
-
     /// <summary>
     /// Enable additive blending.
     /// </summary>
@@ -155,7 +136,6 @@ public class PipelineBuilder {
         _colorBlendAttachment.AlphaBlendOp = BlendOp.Add;
         return this;
     }
-
     /// <summary>
     /// Enable alpha blending (standard transparency).
     /// </summary>
@@ -174,7 +154,6 @@ public class PipelineBuilder {
         _colorBlendAttachment.AlphaBlendOp = BlendOp.Add;
         return this;
     }
-
     /// <summary>
     /// Set the color attachment format for dynamic rendering.
     /// </summary>
@@ -183,7 +162,6 @@ public class PipelineBuilder {
         _renderInfo.ColorAttachmentCount = 1;
         return this;
     }
-
     /// <summary>
     /// Set the depth attachment format for dynamic rendering.
     /// </summary>
@@ -191,7 +169,6 @@ public class PipelineBuilder {
         _renderInfo.DepthAttachmentFormat = format;
         return this;
     }
-
     /// <summary>
     /// Disable depth testing entirely.
     /// </summary>
@@ -207,7 +184,6 @@ public class PipelineBuilder {
         _depthStencil.MaxDepthBounds = 1.0f;
         return this;
     }
-
     /// <summary>
     /// Enable depth testing with specified compare operation.
     /// </summary>
@@ -223,7 +199,14 @@ public class PipelineBuilder {
         _depthStencil.MaxDepthBounds = 1.0f;
         return this;
     }
-
+    /// <summary>
+    /// Set custom vertex input descriptions.
+    /// </summary>
+    public PipelineBuilder SetVertexInput(VertexInputBindingDescription binding, VertexInputAttributeDescription[] attributes) {
+        _bindingDescription = binding;
+        _attributeDescriptions = attributes;
+        return this;
+    }
     /// <summary>
     /// Build the graphics pipeline using the current builder state.
     /// </summary>
@@ -236,7 +219,6 @@ public class PipelineBuilder {
             ViewportCount = 1,
             ScissorCount = 1
         };
-
         // Color blending state
         fixed (PipelineColorBlendAttachmentState* pColorBlendAttachment = &_colorBlendAttachment) {
             var colorBlending = new PipelineColorBlendStateCreateInfo {
@@ -246,32 +228,26 @@ public class PipelineBuilder {
                 AttachmentCount = 1,
                 PAttachments = pColorBlendAttachment
             };
-
-            var bindingDescription = Vertex.GetBindingDescription();
-            var attributeDescriptions = Vertex.GetAttributeDescriptions();
-
-            fixed (VertexInputAttributeDescription* attributeDescPtr = attributeDescriptions) {
+            fixed (VertexInputBindingDescription* pBinding = &_bindingDescription)
+            fixed (VertexInputAttributeDescription* pAttributes = _attributeDescriptions) {
                 // Empty vertex input state (we use vertex pulling)
                 var vertexInputInfo = new PipelineVertexInputStateCreateInfo {
                     SType = StructureType.PipelineVertexInputStateCreateInfo,
                     VertexBindingDescriptionCount = 1,
-                    PVertexBindingDescriptions = &bindingDescription,
-                    VertexAttributeDescriptionCount = (uint) attributeDescriptions.Length,
-                    PVertexAttributeDescriptions = attributeDescPtr
+                    PVertexBindingDescriptions = pBinding,
+                    VertexAttributeDescriptionCount = (uint) _attributeDescriptions.Length,
+                    PVertexAttributeDescriptions = pAttributes
                 };
-
                 // Dynamic state - viewport and scissor
                 var dynamicStates = stackalloc DynamicState[] {
                 DynamicState.Viewport,
                 DynamicState.Scissor
             };
-
                 var dynamicInfo = new PipelineDynamicStateCreateInfo {
                     SType = StructureType.PipelineDynamicStateCreateInfo,
                     PDynamicStates = dynamicStates,
                     DynamicStateCount = 2
                 };
-
                 // Set color attachment format pointer for render info
                 fixed (Format* pColorFormat = &_colorAttachmentFormat)
                 fixed (PipelineInputAssemblyStateCreateInfo* pInputAssembly = &_inputAssembly)
@@ -279,7 +255,6 @@ public class PipelineBuilder {
                 fixed (PipelineMultisampleStateCreateInfo* pMultisampling = &_multisampling)
                 fixed (PipelineDepthStencilStateCreateInfo* pDepthStencil = &_depthStencil) {
                     _renderInfo.PColorAttachmentFormats = pColorFormat;
-
                     var stages = _shaderStages.ToArray();
                     fixed (PipelineShaderStageCreateInfo* pStages = stages)
                     fixed (PipelineRenderingCreateInfo* pRenderInfo = &_renderInfo) {
@@ -298,16 +273,13 @@ public class PipelineBuilder {
                             Layout = PipelineLayout,
                             PDynamicState = &dynamicInfo
                         };
-
                         Pipeline newPipeline;
                         var result = _vk.CreateGraphicsPipelines(
                             device, default, 1, &pipelineInfo, null, &newPipeline);
-
                         if (result != Result.Success) {
                             Console.WriteLine($"Failed to create graphics pipeline: {result}");
                             return default;
                         }
-
                         return newPipeline;
                     }
                 }

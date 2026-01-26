@@ -13,18 +13,22 @@ if not exist "%GLSLC%" (
 
 echo Compiling shaders...
 
-"%GLSLC%" colored_triangle.vert -o colored_triangle.vert.spv
-if %errorlevel% neq 0 (
-    echo Failed to compile colored_triangle.vert
-    exit /b 1
+for %%f in (*.vert) do (
+    "%GLSLC%" "%%f" -o "%%f.spv"
+    if errorlevel 1 (
+        echo Failed to compile %%f
+        exit /b 1
+    )
+    echo Compiled %%f
 )
-echo Compiled colored_triangle.vert
 
-"%GLSLC%" colored_triangle.frag -o colored_triangle.frag.spv
-if %errorlevel% neq 0 (
-    echo Failed to compile colored_triangle.frag
-    exit /b 1
+for %%f in (*.frag) do (
+    "%GLSLC%" "%%f" -o "%%f.spv"
+    if errorlevel 1 (
+        echo Failed to compile %%f
+        exit /b 1
+    )
+    echo Compiled %%f
 )
-echo Compiled colored_triangle.frag
 
 echo All shaders compiled successfully!

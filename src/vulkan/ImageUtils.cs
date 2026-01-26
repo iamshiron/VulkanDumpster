@@ -1,7 +1,5 @@
 using Silk.NET.Vulkan;
-
 namespace Shiron.VulkanDumpster.Vulkan;
-
 /// <summary>
 /// Utility functions for working with Vulkan images.
 /// </summary>
@@ -37,17 +35,14 @@ public static class ImageUtils {
                     : ImageAspectFlags.ColorBit),
             Image = image
         };
-
         var depInfo = new DependencyInfo {
             SType = StructureType.DependencyInfo,
             PNext = null,
             ImageMemoryBarrierCount = 1,
             PImageMemoryBarriers = &imageBarrier
         };
-
         vk.CmdPipelineBarrier2(cmd, &depInfo);
     }
-
     /// <summary>
     /// Create a default image subresource range covering all mip levels and array layers.
     /// </summary>

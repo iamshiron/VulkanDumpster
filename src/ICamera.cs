@@ -1,7 +1,5 @@
 using Silk.NET.Maths;
-
 namespace Shiron.VulkanDumpster;
-
 /// <summary>
 /// Interface for any camera system.
 /// </summary>

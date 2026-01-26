@@ -4,9 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
-
 namespace Shiron.VulkanDumpster.Vulkan;
-
 /// <summary>
 /// Fluent builder for a Vulkan logical device.
 /// It collects queues, extensions, and feature toggles before calling vkCreateDevice.
@@ -15,18 +13,14 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
     private readonly Vk _vk;
     private readonly PhysicalDevice _physicalDevice;
     private readonly QueueFamilyIndices _queueFamilyIndices;
-
     private readonly List<string> _extensions = new();
     private readonly Dictionary<uint, List<float>> _queuePriorities = new();
     private PhysicalDeviceFeatures _enabledFeatures;
     private bool _enableAllAvailableFeatures;
     private bool _enableSynchronization2 = true; // Enable by default for Vulkan 1.3
-
     private Device _device;
     private readonly Dictionary<uint, Queue[]> _queues = new();
-
     private bool _built;
-
     public LogicalDeviceBuilder(Vk vk, PhysicalDevice physicalDevice, QueueFamilyIndices queueFamilyIndices) {
         _vk = vk ?? throw new ArgumentNullException(nameof(vk));
         if (physicalDevice.Handle == 0)
@@ -34,15 +28,12 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         _physicalDevice = physicalDevice;
         _queueFamilyIndices = queueFamilyIndices;
     }
-
     /// <summary>
     /// Convenience constructor that takes a PhysicalDeviceSelector directly.
     /// </summary>
     public LogicalDeviceBuilder(Vk vk, PhysicalDeviceSelector selector)
         : this(vk, selector.PhysicalDevice, selector.QueueFamilies) { }
-
     public Device Device => _device;
-
     /// <summary>
     /// Add device extensions (e.g. VK_KHR_swapchain).
     /// </summary>
@@ -51,7 +42,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             if (!_extensions.Contains(e)) _extensions.Add(e);
         return this;
     }
-
     /// <summary>
     /// Add a queue from the graphics family with specified priority (0.0 - 1.0).
     /// </summary>
@@ -60,7 +50,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             AddQueue(_queueFamilyIndices.GraphicsFamily.Value, priority);
         return this;
     }
-
     /// <summary>
     /// Add a queue from the compute family with specified priority (0.0 - 1.0).
     /// </summary>
@@ -69,7 +58,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             AddQueue(_queueFamilyIndices.ComputeFamily.Value, priority);
         return this;
     }
-
     /// <summary>
     /// Add a queue from the transfer family with specified priority (0.0 - 1.0).
     /// </summary>
@@ -78,7 +66,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             AddQueue(_queueFamilyIndices.TransferFamily.Value, priority);
         return this;
     }
-
     /// <summary>
     /// Add a queue from the present family with specified priority (0.0 - 1.0).
     /// </summary>
@@ -87,7 +74,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             AddQueue(_queueFamilyIndices.PresentFamily.Value, priority);
         return this;
     }
-
     /// <summary>
     /// Add a queue from a specific queue family index with specified priority.
     /// </summary>
@@ -98,7 +84,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         _queuePriorities[queueFamilyIndex].Add(priority);
         return this;
     }
-
     /// <summary>
     /// Set specific device features to enable.
     /// </summary>
@@ -106,7 +91,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         _enabledFeatures = features;
         return this;
     }
-
     /// <summary>
     /// Configure device features using a callback.
     /// </summary>
@@ -116,7 +100,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         _enabledFeatures = configurator.Features;
         return this;
     }
-
     /// <summary>
     /// Enable all features supported by the physical device.
     /// </summary>
@@ -124,7 +107,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         _enableAllAvailableFeatures = true;
         return this;
     }
-
     /// <summary>
     /// Enable or disable the synchronization2 feature (Vulkan 1.3).
     /// Enabled by default for Vulkan 1.3 applications.
@@ -133,14 +115,12 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         _enableSynchronization2 = enable;
         return this;
     }
-
     /// <summary>
     /// Build the logical device and cache the created queues.
     /// </summary>
     public Device Build() {
         if (_built) throw new InvalidOperationException("LogicalDeviceBuilder.Build() can only be called once.");
         _built = true;
-
         // Ensure at least one queue is requested
         if (_queuePriorities.Count == 0) {
             // Default: add one graphics queue if available
@@ -149,7 +129,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             else
                 throw new InvalidOperationException("No queues specified and no graphics queue family available.");
         }
-
         // Get max queue count per family
         uint queueFamilyCount = 0;
         _vk.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, &queueFamilyCount, null);
@@ -157,19 +136,15 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         fixed (QueueFamilyProperties* pProps = queueFamilyProps) {
             _vk.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, &queueFamilyCount, pProps);
         }
-
         // Build queue create infos
         var queueCreateInfos = new List<DeviceQueueCreateInfo>();
         var priorityHandles = new List<GCHandle>();
-
         foreach (var (familyIndex, priorities) in _queuePriorities) {
             // Clamp to max available queues in this family
             var maxQueues = (int) queueFamilyProps[familyIndex].QueueCount;
             var actualPriorities = priorities.Take(maxQueues).ToArray();
-
             var handle = GCHandle.Alloc(actualPriorities, GCHandleType.Pinned);
             priorityHandles.Add(handle);
-
             queueCreateInfos.Add(new DeviceQueueCreateInfo {
                 SType = StructureType.DeviceQueueCreateInfo,
                 QueueFamilyIndex = familyIndex,
@@ -177,16 +152,13 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
                 PQueuePriorities = (float*) handle.AddrOfPinnedObject()
             });
         }
-
         // Get enabled features
         var enabledFeatures = _enabledFeatures;
         if (_enableAllAvailableFeatures) {
             _vk.GetPhysicalDeviceFeatures(_physicalDevice, out enabledFeatures);
         }
-
         // Prepare extensions
         var extPtrs = SilkMarshal.StringArrayToPtr(_extensions.ToArray(), NativeStringEncoding.UTF8);
-
         // Vulkan 1.3 features (synchronization2, etc.)
         var vulkan13Features = new PhysicalDeviceVulkan13Features {
             SType = StructureType.PhysicalDeviceVulkan13Features,
@@ -194,7 +166,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             Synchronization2 = _enableSynchronization2,
             DynamicRendering = true // Also enable dynamic rendering which is commonly used
         };
-
         // Vulkan 1.2 features - enable commonly needed features
         var vulkan12Features = new PhysicalDeviceVulkan12Features {
             SType = StructureType.PhysicalDeviceVulkan12Features,
@@ -202,7 +173,6 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
             BufferDeviceAddress = true,
             DescriptorIndexing = true
         };
-
         // Create device
         fixed (DeviceQueueCreateInfo* pQueueCreateInfos = queueCreateInfos.ToArray()) {
             var createInfo = new DeviceCreateInfo {
@@ -214,82 +184,65 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
                 PpEnabledExtensionNames = (byte**) extPtrs,
                 PEnabledFeatures = &enabledFeatures
             };
-
             var result = _vk.CreateDevice(_physicalDevice, &createInfo, null, out _device);
-
             // Cleanup
             SilkMarshal.Free(extPtrs);
             foreach (var handle in priorityHandles) handle.Free();
-
             if (result != Result.Success) {
                 throw new VulkanException("Failed to create logical device. " + result, result);
             }
         }
-
         // Retrieve created queues
         foreach (var (familyIndex, priorities) in _queuePriorities) {
             var maxQueues = (int) queueFamilyProps[familyIndex].QueueCount;
             var actualCount = Math.Min(priorities.Count, maxQueues);
             var queues = new Queue[actualCount];
-
             for (uint i = 0; i < actualCount; i++) {
                 _vk.GetDeviceQueue(_device, familyIndex, i, out queues[i]);
             }
-
             _queues[familyIndex] = queues;
         }
-
         return _device;
     }
-
     /// <summary>
     /// Get the graphics queue (first queue from graphics family).
     /// </summary>
     public Queue GetGraphicsQueue(uint index = 0) {
         return GetQueue(_queueFamilyIndices.GraphicsFamily, index);
     }
-
     /// <summary>
     /// Get the compute queue (first queue from compute family).
     /// </summary>
     public Queue GetComputeQueue(uint index = 0) {
         return GetQueue(_queueFamilyIndices.ComputeFamily, index);
     }
-
     /// <summary>
     /// Get the transfer queue (first queue from transfer family).
     /// </summary>
     public Queue GetTransferQueue(uint index = 0) {
         return GetQueue(_queueFamilyIndices.TransferFamily, index);
     }
-
     /// <summary>
     /// Get the present queue (first queue from present family).
     /// </summary>
     public Queue GetPresentQueue(uint index = 0) {
         return GetQueue(_queueFamilyIndices.PresentFamily, index);
     }
-
     /// <summary>
     /// Get a queue from a specific family by index.
     /// </summary>
     public Queue GetQueue(uint? familyIndex, uint queueIndex = 0) {
         if (!_built)
             throw new InvalidOperationException("Device not built. Call Build() first.");
-
         if (!familyIndex.HasValue)
             throw new InvalidOperationException("Queue family not available.");
-
         if (!_queues.TryGetValue(familyIndex.Value, out var queues))
             throw new InvalidOperationException($"No queues created for family {familyIndex.Value}.");
-
         if (queueIndex >= queues.Length)
             throw new ArgumentOutOfRangeException(nameof(queueIndex),
                 $"Queue index {queueIndex} out of range. Only {queues.Length} queue(s) available.");
-
         return queues[queueIndex];
     }
-
     /// <summary>
     /// Destroy the logical device and all child resources.
     /// </summary>
@@ -300,18 +253,15 @@ public sealed unsafe class LogicalDeviceBuilder : IDisposable {
         }
     }
 }
-
 /// <summary>
 /// Fluent helper for toggling <see cref="PhysicalDeviceFeatures"/> flags.
 /// </summary>
 public class FeatureConfigurator {
     internal PhysicalDeviceFeatures Features => _features;
     private PhysicalDeviceFeatures _features;
-
     internal FeatureConfigurator(PhysicalDeviceFeatures initial) {
         _features = initial;
     }
-
     /// <summary>
     /// Enable or disable sampler anisotropy.
     /// </summary>
@@ -319,7 +269,6 @@ public class FeatureConfigurator {
         _features.SamplerAnisotropy = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable geometry shader support.
     /// </summary>
@@ -327,7 +276,6 @@ public class FeatureConfigurator {
         _features.GeometryShader = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable tessellation shader support.
     /// </summary>
@@ -335,7 +283,6 @@ public class FeatureConfigurator {
         _features.TessellationShader = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable multi-draw indirect commands.
     /// </summary>
@@ -343,7 +290,6 @@ public class FeatureConfigurator {
         _features.MultiDrawIndirect = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable non-solid fill modes (e.g., wireframe).
     /// </summary>
@@ -351,7 +297,6 @@ public class FeatureConfigurator {
         _features.FillModeNonSolid = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable wide line rendering.
     /// </summary>
@@ -359,7 +304,6 @@ public class FeatureConfigurator {
         _features.WideLines = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable large point rendering.
     /// </summary>
@@ -367,7 +311,6 @@ public class FeatureConfigurator {
         _features.LargePoints = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable multiple viewports.
     /// </summary>
@@ -375,7 +318,6 @@ public class FeatureConfigurator {
         _features.MultiViewport = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable 64-bit floating point shader support.
     /// </summary>
@@ -383,7 +325,6 @@ public class FeatureConfigurator {
         _features.ShaderFloat64 = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable 64-bit integer shader support.
     /// </summary>
@@ -391,7 +332,6 @@ public class FeatureConfigurator {
         _features.ShaderInt64 = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable 16-bit integer shader support.
     /// </summary>
@@ -399,7 +339,6 @@ public class FeatureConfigurator {
         _features.ShaderInt16 = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable depth clamp.
     /// </summary>
@@ -407,7 +346,6 @@ public class FeatureConfigurator {
         _features.DepthClamp = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable depth bias clamp.
     /// </summary>
@@ -415,7 +353,6 @@ public class FeatureConfigurator {
         _features.DepthBiasClamp = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable depth bounds testing.
     /// </summary>
@@ -423,7 +360,6 @@ public class FeatureConfigurator {
         _features.DepthBounds = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable alpha-to-one.
     /// </summary>
@@ -431,7 +367,6 @@ public class FeatureConfigurator {
         _features.AlphaToOne = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable dual-source blending.
     /// </summary>
@@ -439,7 +374,6 @@ public class FeatureConfigurator {
         _features.DualSrcBlend = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable logic operations for blending.
     /// </summary>
@@ -447,7 +381,6 @@ public class FeatureConfigurator {
         _features.LogicOp = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable cube map array textures.
     /// </summary>
@@ -455,7 +388,6 @@ public class FeatureConfigurator {
         _features.ImageCubeArray = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable independent blend states per attachment.
     /// </summary>
@@ -463,7 +395,6 @@ public class FeatureConfigurator {
         _features.IndependentBlend = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable robust buffer access.
     /// </summary>
@@ -471,7 +402,6 @@ public class FeatureConfigurator {
         _features.RobustBufferAccess = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable full 32-bit draw index range.
     /// </summary>
@@ -479,7 +409,6 @@ public class FeatureConfigurator {
         _features.FullDrawIndexUint32 = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable BC texture compression support.
     /// </summary>
@@ -487,7 +416,6 @@ public class FeatureConfigurator {
         _features.TextureCompressionBC = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable ETC2 texture compression support.
     /// </summary>
@@ -495,7 +423,6 @@ public class FeatureConfigurator {
         _features.TextureCompressionEtc2 = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable ASTC LDR texture compression support.
     /// </summary>
@@ -503,7 +430,6 @@ public class FeatureConfigurator {
         _features.TextureCompressionAstcLdr = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable extended image formats for storage images.
     /// </summary>
@@ -511,7 +437,6 @@ public class FeatureConfigurator {
         _features.ShaderStorageImageExtendedFormats = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable fragment shader stores and atomics.
     /// </summary>
@@ -519,7 +444,6 @@ public class FeatureConfigurator {
         _features.FragmentStoresAndAtomics = enable;
         return this;
     }
-
     /// <summary>
     /// Enable or disable vertex pipeline stores and atomics.
     /// </summary>

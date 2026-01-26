@@ -1,28 +1,24 @@
 using System.Numerics;
-using Silk.NET.Vulkan;
 using Silk.NET.Maths;
-
+using Silk.NET.Vulkan;
 namespace Shiron.VulkanDumpster.Vulkan;
 
 public struct Vertex {
     public Vector3D<float> Position;
     public Vector2D<float> TexCoord;
     public float TexIndex;
-
     public Vertex(Vector3D<float> position, Vector2D<float> texCoord, float texIndex) {
         Position = position;
         TexCoord = texCoord;
         TexIndex = texIndex;
     }
-
     public static unsafe VertexInputBindingDescription GetBindingDescription() {
         return new VertexInputBindingDescription {
             Binding = 0,
-            Stride = (uint)sizeof(Vertex),
+            Stride = (uint) sizeof(Vertex),
             InputRate = VertexInputRate.Vertex
         };
     }
-
     public static unsafe VertexInputAttributeDescription[] GetAttributeDescriptions() {
         return new[] {
             new VertexInputAttributeDescription {

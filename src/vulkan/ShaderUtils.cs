@@ -1,9 +1,7 @@
-using Silk.NET.Vulkan;
 using System;
 using System.IO;
-
+using Silk.NET.Vulkan;
 namespace Shiron.VulkanDumpster.Vulkan;
-
 /// <summary>
 /// Utility functions for working with SPIR-V shader modules.
 /// </summary>
@@ -18,38 +16,31 @@ public static class ShaderUtils {
     /// <returns>True if the shader was loaded successfully, false otherwise.</returns>
     public static unsafe bool LoadShaderModule(Vk vk, Device device, string filePath, out ShaderModule shaderModule) {
         shaderModule = default;
-
         // Check if file exists
         if (!File.Exists(filePath)) {
             Console.WriteLine($"Shader file not found: {filePath}");
             return false;
         }
-
         try {
             // Read the compiled SPIR-V bytecode
             var bytes = File.ReadAllBytes(filePath);
-
             // SPIR-V code must be aligned to 4 bytes
             if (bytes.Length % 4 != 0) {
                 Console.WriteLine($"Invalid SPIR-V file: {filePath} (size not aligned to 4 bytes)");
                 return false;
             }
-
             fixed (byte* pCode = bytes) {
                 var createInfo = new ShaderModuleCreateInfo {
                     SType = StructureType.ShaderModuleCreateInfo,
                     CodeSize = (nuint) bytes.Length,
                     PCode = (uint*) pCode
                 };
-
                 ShaderModule module;
                 var result = vk.CreateShaderModule(device, &createInfo, null, &module);
-
                 if (result != Result.Success) {
                     Console.WriteLine($"Failed to create shader module from {filePath}: {result}");
                     return false;
                 }
-
                 shaderModule = module;
                 return true;
             }
@@ -58,7 +49,6 @@ public static class ShaderUtils {
             return false;
         }
     }
-
     /// <summary>
     /// Create a pipeline shader stage for the "main" entry point.
     /// </summary>
