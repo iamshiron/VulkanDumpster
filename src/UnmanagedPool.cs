@@ -19,7 +19,11 @@ public static unsafe class UnmanagedPool {
             return (void*)ptr;
         }
 
-        return (void*)NativeMemory.Alloc(size);
+        void* newPtr = (void*)NativeMemory.Alloc(size);
+        if (newPtr == null) {
+            throw new OutOfMemoryException($"Failed to allocate {size} bytes of unmanaged memory.");
+        }
+        return newPtr;
     }
 
     public static void Return(void* ptr, nuint size) {

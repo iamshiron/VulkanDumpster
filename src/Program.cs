@@ -39,8 +39,37 @@ public class Program {
             private static bool _pKeyWasPressed = false;
             private static bool _rKeyWasPressed = false;
             private static bool _hKeyWasPressed = false;
+            private static bool _gKeyWasPressed = false;
             private static readonly RingBuffer<float> _fpsRollingAverage = new(1000);
             private static readonly RingBuffer<float> _deltaRollingAverage = new(1000);
+
+            private static float _uiUpdateTimer = 0.11f;
+            private static string _cachedFpsText = "";
+            private static string _cachedFrameTimeText = "";
+            private static string _cachedChunkCountText = "";
+            private static string _cachedRenderedChunksText = "";
+            private static string _cachedRegionsText = "";
+            private static string _cachedUpdatesText = "";
+            private static string _cachedPosText = "";
+            private static string _cachedRenderDistanceText = "";
+            private static string _cachedVsyncText = "";
+            private static List<Profiler.ProfileResult> _cachedCpuResults = new();
+            private static Dictionary<string, double> _cachedGpuResults = new();
+            private static string _cachedVulkanDrawCalls = "";
+            private static string _cachedVulkanPipelineBinds = "";
+            private static string _cachedVulkanDescSetBinds = "";
+            private static string _cachedVulkanVbBinds = "";
+            private static string _cachedVulkanIbBinds = "";
+            private static string _cachedVulkanPushConstants = "";
+            private static List<(string name, int count)> _cachedShaderExecutions = new();
+            private static string _cachedMemWorkingSet = "";
+            private static string _cachedMemPrivate = "";
+            private static string _cachedMemManaged = "";
+            private static string _cachedMemGc = "";
+            private static string _cachedAllocPerFrameText = "";
+            private static long _lastTotalAllocatedBytes;
+            private static long _accumulatedAllocatedBytes;
+            private static int _uiFrameCount;
 
     // Global UBO: Shared by everything
             private struct GlobalUniforms {
@@ -183,6 +212,14 @@ public class Program {
     }
     private unsafe void Render(double delta) {
         Profiler.Begin("Total Frame");
+        
+        long currentAlloc = GC.GetTotalAllocatedBytes();
+        if (_lastTotalAllocatedBytes != 0) {
+            _accumulatedAllocatedBytes += (currentAlloc - _lastTotalAllocatedBytes);
+        }
+        _lastTotalAllocatedBytes = currentAlloc;
+        _uiFrameCount++;
+
         _elapsedTime += delta;
         _frameCount++;
         _fpsTimer += delta;
@@ -244,81 +281,122 @@ public class Program {
         Profiler.Begin("Text Render");
         if (_showUI) {
             _textRenderer.Begin();
-            string fpsText = $"FPS: {_fpsRollingAverage.Average:F1} " +
-                             $"(Med: {_fpsRollingAverage.GetMedian():F1}, " +
-                             $"Min: {_fpsRollingAverage.GetMin():F1}, " +
-                             $"Max: {_fpsRollingAverage.GetMax():F1}, " +
-                             $"1%: {_fpsRollingAverage.GetPercentile(0.01f):F1}, " +
-                             $"0.1%: {_fpsRollingAverage.GetPercentile(0.001f):F1})";
-            _textRenderer.DrawText(fpsText, 10, 30, 1.0f, new Vector4(1, 1, 1, 1));
 
-            // Add Frame Time metrics (in ms)
-            double avgMs = _deltaRollingAverage.Average * 1000.0;
-            double jitterMs = _deltaRollingAverage.GetStandardDeviation() * 1000.0;
-            double maxMs = _deltaRollingAverage.GetMax() * 1000.0;
-            string ftText = $"Frame Time: {avgMs:F2}ms (Jitter: {jitterMs:F2}ms, Max: {maxMs:F2}ms)";
-            
+            _uiUpdateTimer += (float)delta;
+            if (_uiUpdateTimer >= 0.1f) {
+                _uiUpdateTimer = 0;
+                _cachedFpsText = $"FPS: {_fpsRollingAverage.Average:F1} " +
+                                 $"(Med: {_fpsRollingAverage.GetMedian():F1}, " +
+                                 $"Min: {_fpsRollingAverage.GetMin():F1}, " +
+                                 $"Max: {_fpsRollingAverage.GetMax():F1}, " +
+                                 $"1%: {_fpsRollingAverage.GetPercentile(0.01f):F1}, " +
+                                 $"0.1%: {_fpsRollingAverage.GetPercentile(0.001f):F1})";
+
+                double avgMs = _deltaRollingAverage.Average * 1000.0;
+                double jitterMs = _deltaRollingAverage.GetStandardDeviation() * 1000.0;
+                double maxMs = _deltaRollingAverage.GetMax() * 1000.0;
+                _cachedFrameTimeText = $"Frame Time: {avgMs:F2}ms (Jitter: {jitterMs:F2}ms, Max: {maxMs:F2}ms)";
+
+                _cachedChunkCountText = $"Total Chunks: {_world.ChunkCount * YChunk.HeightInChunks}";
+                _cachedRenderedChunksText = $"Rendered Chunks: {_world.RenderedChunksCount}";
+                _cachedRegionsText = $"Regions (Rendered/Total): {_world.RenderedRegionsCount}/{_world.TotalRegionsCount}";
+                _cachedUpdatesText = $"Updates: {_world.LastFrameUpdates}";
+                _cachedPosText = $"Pos: {_camera.Position.X:F1}, {_camera.Position.Y:F1}, {_camera.Position.Z:F1}";
+                _cachedRenderDistanceText = $"Render Distance: {_settings.RenderDistance}";
+                _cachedVsyncText = $"VSync: {_settings.VSync}";
+
+                _cachedCpuResults = Profiler.GetResults();
+                _cachedGpuResults = new Dictionary<string, double>(_renderer.GPUProfiler.GetLatestResults());
+                
+                _cachedVulkanDrawCalls = $"Draw Calls: {VulkanCommandProfiler.DrawCalls}";
+                _cachedVulkanPipelineBinds = $"Pipeline Binds: {VulkanCommandProfiler.PipelineBinds}";
+                _cachedVulkanDescSetBinds = $"Desc Set Binds: {VulkanCommandProfiler.DescriptorSetBinds}";
+                _cachedVulkanVbBinds = $"VB Binds: {VulkanCommandProfiler.VertexBufferBinds}";
+                _cachedVulkanIbBinds = $"IB Binds: {VulkanCommandProfiler.IndexBufferBinds}";
+                _cachedVulkanPushConstants = $"Push Constants: {VulkanCommandProfiler.PushConstantsCount}";
+
+                _cachedShaderExecutions.Clear();
+                VulkanCommandProfiler.ForEachShaderExecution((name, count) => _cachedShaderExecutions.Add((name, count)));
+
+                var mem = MemoryProfiler.GetStats();
+                _cachedMemWorkingSet = $"Working Set: {mem.WorkingSetMB:F1} MB";
+                _cachedMemPrivate = $"Private: {mem.PrivateMemoryMB:F1} MB";
+                _cachedMemManaged = $"Managed: {mem.ManagedMemoryMB:F1} MB";
+                _cachedMemGc = $"GC G0/G1/G2: {mem.Gen0Collections}/{mem.Gen1Collections}/{mem.Gen2Collections}";
+
+                float avgAlloc = _uiFrameCount > 0 ? _accumulatedAllocatedBytes / (float)_uiFrameCount : 0;
+                _cachedAllocPerFrameText = $"Alloc/Frame: {avgAlloc / 1024.0:F2} KB";
+                _accumulatedAllocatedBytes = 0;
+                _uiFrameCount = 0;
+            }
+
+            _textRenderer.DrawText(_cachedFpsText, 10, 30, 1.0f, new Vector4(1, 1, 1, 1));
+
             // Color code based on stutter intensity
+            double avgMs_ft = _deltaRollingAverage.Average * 1000.0;
+            double jitterMs_ft = _deltaRollingAverage.GetStandardDeviation() * 1000.0;
             Vector4 ftColor = new Vector4(0.8f, 0.8f, 0.8f, 1);
-            if (jitterMs > avgMs * 0.15) ftColor = new Vector4(1, 1, 0, 1); // Warning: > 15% variance
-            if (jitterMs > avgMs * 0.50) ftColor = new Vector4(1, 0, 0, 1); // Critical: > 50% variance
+            if (jitterMs_ft > avgMs_ft * 0.15) ftColor = new Vector4(1, 1, 0, 1); // Warning: > 15% variance
+            if (jitterMs_ft > avgMs_ft * 0.50) ftColor = new Vector4(1, 0, 0, 1); // Critical: > 50% variance
             
-            _textRenderer.DrawText(ftText, 10, 55, 0.9f, ftColor);
+            _textRenderer.DrawText(_cachedFrameTimeText, 10, 55, 0.9f, ftColor);
 
-                    _textRenderer.DrawText($"Total Chunks: {_world.ChunkCount * YChunk.HeightInChunks}", 10, 80, 1.0f, new Vector4(1, 1, 1, 1));
-                    _textRenderer.DrawText($"Rendered Chunks: {_world.RenderedChunksCount}", 10, 105, 1.0f, new Vector4(1, 1, 1, 1));
-                    _textRenderer.DrawText($"Regions (Rendered/Total): {_world.RenderedRegionsCount}/{_world.TotalRegionsCount}", 10, 130, 1.0f, new Vector4(0.4f, 1.0f, 0.4f, 1));
-                    _textRenderer.DrawText($"Updates: {_world.LastFrameUpdates}", 10, 155, 1.0f, new Vector4(1, 1, 1, 1));
-                    _textRenderer.DrawText($"Pos: {_camera.Position.X:F1}, {_camera.Position.Y:F1}, {_camera.Position.Z:F1}", 10, 180, 1.0f, new Vector4(1, 1, 1, 1));        _textRenderer.DrawText($"Render Distance: {_settings.RenderDistance}", 10, 205, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.DrawText($"VSync: {_settings.VSync}", 10, 230, 1.0f, new Vector4(1, 1, 1, 1));
+            _textRenderer.DrawText(_cachedChunkCountText, 10, 80, 1.0f, new Vector4(1, 1, 1, 1));
+            _textRenderer.DrawText(_cachedRenderedChunksText, 10, 105, 1.0f, new Vector4(1, 1, 1, 1));
+            _textRenderer.DrawText(_cachedRegionsText, 10, 130, 1.0f, new Vector4(0.4f, 1.0f, 0.4f, 1));
+            _textRenderer.DrawText(_cachedUpdatesText, 10, 155, 1.0f, new Vector4(1, 1, 1, 1));
+            _textRenderer.DrawText(_cachedPosText, 10, 180, 1.0f, new Vector4(1, 1, 1, 1));
+            _textRenderer.DrawText(_cachedRenderDistanceText, 10, 205, 1.0f, new Vector4(1, 1, 1, 1));
+            _textRenderer.DrawText(_cachedVsyncText, 10, 230, 1.0f, new Vector4(1, 1, 1, 1));
         
-        // Display Profiler Results
-        int yOffset = 260;
-        _textRenderer.DrawText("--- CPU Profiler ---", 10, yOffset, 0.8f, new Vector4(1, 0.8f, 0, 1));
+            // Display Profiler Results
+            int yOffset = 260;
+            _textRenderer.DrawText("--- CPU Profiler ---", 10, yOffset, 0.8f, new Vector4(1, 0.8f, 0, 1));
             yOffset += 20;
-            Profiler.ForEachResult((name, avg, max) => {
-                _textRenderer.DrawText($"{name}: {avg:F3} ms (Max: {max:F2})", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            foreach (var res in _cachedCpuResults) {
+                _textRenderer.DrawText($"{res.Name}: {res.Average:F3} ms (Max: {res.Max:F2})", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
                 yOffset += 20;
-            });
+            }
 
             yOffset += 10;
             _textRenderer.DrawText("--- GPU Profiler ---", 10, yOffset, 0.8f, new Vector4(0, 0.8f, 1, 1));
             yOffset += 20;
-            _renderer.GPUProfiler.ForEachLatestResult((name, time) => {
-                _textRenderer.DrawText($"{name}: {time:F3} ms", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            foreach (var pair in _cachedGpuResults) {
+                _textRenderer.DrawText($"{pair.Key}: {pair.Value:F3} ms", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
                 yOffset += 20;
-            });
+            }
 
             yOffset += 10;
             _textRenderer.DrawText("--- Vulkan Stats ---", 10, yOffset, 0.8f, new Vector4(1, 0.2f, 0.2f, 1));
             yOffset += 20;
-            _textRenderer.DrawText($"Draw Calls: {VulkanCommandProfiler.DrawCalls}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedVulkanDrawCalls, 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
             yOffset += 20;
-            _textRenderer.DrawText($"Pipeline Binds: {VulkanCommandProfiler.PipelineBinds}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
-            _textRenderer.DrawText($"Desc Set Binds: {VulkanCommandProfiler.DescriptorSetBinds}", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedVulkanPipelineBinds, 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedVulkanDescSetBinds, 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
             yOffset += 20;
-            _textRenderer.DrawText($"VB Binds: {VulkanCommandProfiler.VertexBufferBinds}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
-            _textRenderer.DrawText($"IB Binds: {VulkanCommandProfiler.IndexBufferBinds}", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedVulkanVbBinds, 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedVulkanIbBinds, 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
             yOffset += 20;
-            _textRenderer.DrawText($"Push Constants: {VulkanCommandProfiler.PushConstantsCount}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedVulkanPushConstants, 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
             
             yOffset += 20;
             _textRenderer.DrawText("--- Shader Executions ---", 10, yOffset, 0.8f, new Vector4(0.5f, 1f, 0.5f, 1));
             yOffset += 20;
-            VulkanCommandProfiler.ForEachShaderExecution((name, count) => {
-                _textRenderer.DrawText($"{name}: {count}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            foreach (var exec in _cachedShaderExecutions) {
+                _textRenderer.DrawText($"{exec.name}: {exec.count}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
                 yOffset += 20;
-            });
+            }
 
             yOffset += 10;
             _textRenderer.DrawText("--- Memory & GC ---", 10, yOffset, 0.8f, new Vector4(0.2f, 0.6f, 1f, 1));
             yOffset += 20;
-            var mem = MemoryProfiler.GetStats();
-            _textRenderer.DrawText($"Working Set: {mem.WorkingSetMB:F1} MB", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
-            _textRenderer.DrawText($"Private: {mem.PrivateMemoryMB:F1} MB", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedMemWorkingSet, 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedMemPrivate, 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
             yOffset += 20;
-            _textRenderer.DrawText($"Managed: {mem.ManagedMemoryMB:F1} MB", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
-            _textRenderer.DrawText($"GC G0/G1/G2: {mem.Gen0Collections}/{mem.Gen1Collections}/{mem.Gen2Collections}", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedMemManaged, 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText(_cachedMemGc, 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 20;
+            _textRenderer.DrawText(_cachedAllocPerFrameText, 20, yOffset, 0.8f, new Vector4(1, 1, 0, 1));
 
             _renderer.GPUProfiler.BeginSection(cmd.Handle, "UI Pass");
             _textRenderer.Render(cmd, new Vector2D<int>((int)_renderer.SwapchainExtent.Width, (int)_renderer.SwapchainExtent.Height), new Vector4(1, 1, 1, 1));
@@ -388,7 +466,8 @@ public class Program {
                 RenderedChunks = _world.RenderedChunksCount,
                 TotalRegions = _world.TotalRegionsCount,
                 RenderedRegions = _world.RenderedRegionsCount,
-                ChunkUpdates = _world.LastFrameUpdates
+                ChunkUpdates = _world.LastFrameUpdates,
+                AllocPerFrameKB = _uiFrameCount > 0 ? (_accumulatedAllocatedBytes / (float)_uiFrameCount) / 1024.0f : 0
             };
 
             Profiler.SaveProfile(fileName, _renderer.GPUProfiler.GetLatestResults(), metadata);
@@ -406,6 +485,13 @@ public class Program {
             _showUI = !_showUI;
         }
         _hKeyWasPressed = isHPressed;
+
+        bool isGPressed = _pressedKeys.Contains(Key.G);
+        if (isGPressed && !_gKeyWasPressed) {
+            GC.Collect(2, GCCollectionMode.Forced, true);
+            Console.WriteLine("[System] Manual GC Collection Triggered.");
+        }
+        _gKeyWasPressed = isGPressed;
     }
     private void OnMouseMove(IMouse mouse, Vector2 position) {
         if (mouse.Cursor.CursorMode != CursorMode.Raw) {

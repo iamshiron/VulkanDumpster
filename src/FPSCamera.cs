@@ -11,7 +11,7 @@ public class FPSCamera : ICamera {
     public Vector3D<float> WorldUp { get; } = Vector3D<float>.UnitY;
     public float Yaw { get; set; } = -90f;
     public float Pitch { get; set; } = 0f;
-    public float MoveSpeed { get; set; } = 100f;
+    public float MoveSpeed { get; set; } = 2000f;
     public float MouseSensitivity { get; set; } = 0.1f;
     public float Zoom { get; set; } = 45f;
     public FPSCamera(Vector3D<float> position) {

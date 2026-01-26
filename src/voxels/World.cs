@@ -31,6 +31,10 @@ public class World : IDisposable {
     private readonly ChunkHeap _chunkHeap;
     private readonly VulkanBuffer[] _indirectBuffers;
     private readonly List<DrawIndexedIndirectCommand> _indirectCommands = new();
+    private readonly BlockingCollection<YChunk> _chunkGenerationQueue = new();
+    private readonly ConcurrentQueue<YChunk> _failedChunks = new();
+    private readonly Task _workerTask;
+    private bool _disposed;
 
     public World(VulkanContext ctx, Renderer renderer, AppSettings settings) {
         _ctx = ctx;
@@ -39,8 +43,8 @@ public class World : IDisposable {
         _batchUploader = new BatchUploader(_ctx, renderer);
         _grid = new ChunkGrid(_settings.RenderDistance);
 
-        // 256MB for vertices, 128MB for indices
-        _chunkHeap = new ChunkHeap(_ctx, 256 * 1024 * 1024, 128 * 1024 * 1024);
+        // Start with smaller heap, will grow as needed
+        _chunkHeap = new ChunkHeap(_ctx, 64 * 1024 * 1024, 32 * 1024 * 1024);
 
         _indirectBuffers = new VulkanBuffer[3];
         for (int i = 0; i < 3; i++) {
@@ -49,9 +53,27 @@ public class World : IDisposable {
                 BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.TransferDstBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
         }
+
+        _workerTask = Task.Factory.StartNew(() => {
+            foreach (var chunk in _chunkGenerationQueue.GetConsumingEnumerable()) {
+                try {
+                    GenerateTerrain(chunk, chunk.ChunkPos);
+                } catch (Exception e) {
+                    Console.WriteLine($"[World] Chunk generation failed for {chunk.ChunkPos}: {e}");
+                    _failedChunks.Enqueue(chunk);
+                }
+            }
+        }, TaskCreationOptions.LongRunning);
     }
 
     public void Update(Vector3D<float> cameraPos) {
+        // Handle failed chunks from worker thread
+        while (_failedChunks.TryDequeue(out var failedChunk)) {
+            if (_grid.GetChunk(failedChunk.ChunkPos) == failedChunk) {
+                UnloadChunk(failedChunk.ChunkPos);
+            }
+        }
+
         var centerChunk = GetChunkPos((int) cameraPos.X, (int) cameraPos.Z);
         
         if (_lastCenterChunk != centerChunk) {
@@ -102,7 +124,7 @@ public class World : IDisposable {
         });
         region.AddChunk(chunk);
 
-        Task.Run(() => GenerateTerrain(chunk, pos));
+        _chunkGenerationQueue.Add(chunk);
     }
 
     private void UnloadChunk(Vector2D<int> pos) {
@@ -146,10 +168,14 @@ public class World : IDisposable {
     }
 
     private unsafe void GenerateTerrain(YChunk chunk, Vector2D<int> chunkPos) {
+        if (chunk == null) return;
         int baseX = chunkPos.X * Chunk.Size;
         int baseZ = chunkPos.Y * Chunk.Size;
         int totalBlockCount = Chunk.Size * Chunk.Size * YChunk.TotalHeight;
         BlockType* columnBlocks = (BlockType*)UnmanagedPool.Rent((nuint)(totalBlockCount * sizeof(BlockType)));
+        if (columnBlocks == null) {
+            throw new OutOfMemoryException("Failed to rent memory for columnBlocks");
+        }
         System.Runtime.CompilerServices.Unsafe.InitBlock(columnBlocks, 0, (uint)(totalBlockCount * sizeof(BlockType)));
 
         try {
@@ -261,6 +287,17 @@ public class World : IDisposable {
     }
 
     public void Dispose() {
+        if (_disposed) return;
+        _disposed = true;
+
+        _chunkGenerationQueue.CompleteAdding();
+        if (_workerTask != null) {
+            try {
+                _workerTask.Wait();
+            } catch (AggregateException) { }
+        }
+        _chunkGenerationQueue.Dispose();
+
         foreach (var chunk in _grid.GetAllActive()) {
             chunk.Dispose(_chunkHeap);
         }

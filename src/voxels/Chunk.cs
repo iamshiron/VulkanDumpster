@@ -11,12 +11,13 @@ namespace Shiron.VulkanDumpster.Voxels;
 public unsafe class Chunk : IDisposable {
     public const int Size = 32;
     public const int BlockCount = Size * Size * Size;
-    
+
     private BlockType* _blocks;
     public BlockType* Blocks => _blocks;
 
     public bool IsMeshDirty { get; private set; } = true;
     public bool IsEmpty { get; private set; } = true;
+    public bool IsDisposed { get; private set; }
     public Vector3D<float> Position { get; private set; }
     private readonly VulkanContext _ctx;
     private readonly World _world;
@@ -24,7 +25,7 @@ public unsafe class Chunk : IDisposable {
     private volatile bool _hasPendingMesh;
     private List<Vertex> _pendingVertices = null!;
     private List<uint> _pendingIndices = null!;
-    private readonly object _blockLock = new();
+    private readonly Lock _blockLock = new();
 
     // Pooling to reduce allocations
     private static readonly ConcurrentQueue<List<Vertex>> _vertexListPool = new();
@@ -32,18 +33,27 @@ public unsafe class Chunk : IDisposable {
     private static int _activeMeshingTasks;
     public static int ActiveMeshingTasks => _activeMeshingTasks;
 
+    static Chunk() {
+        // Pre-warm pools
+        for (int i = 0; i < 2048; i++) {
+            _vertexListPool.Enqueue(new List<Vertex>(2048));
+            _indexListPool.Enqueue(new List<uint>(2048));
+        }
+    }
+
     public Chunk(VulkanContext ctx, World world, Vector3D<float> position) {
         _ctx = ctx;
         _world = world;
         Position = position;
-        _blocks = (BlockType*)UnmanagedPool.Rent((nuint)(BlockCount * sizeof(BlockType)));
-        System.Runtime.CompilerServices.Unsafe.InitBlock(_blocks, 0, (uint)(BlockCount * sizeof(BlockType)));
+        _blocks = (BlockType*) UnmanagedPool.Rent((nuint) (BlockCount * sizeof(BlockType)));
+        System.Runtime.CompilerServices.Unsafe.InitBlock(_blocks, 0, (uint) (BlockCount * sizeof(BlockType)));
     }
 
     public void SetBlock(int x, int y, int z, BlockType type) {
         if (x < 0 || x >= Size || y < 0 || y >= Size || z < 0 || z >= Size) return;
         int index = GetIndex(x, y, z);
         lock (_blockLock) {
+            if (_blocks == null) return;
             if (_blocks[index] != type) {
                 _blocks[index] = type;
                 if (type != BlockType.Air) IsEmpty = false;
@@ -51,11 +61,13 @@ public unsafe class Chunk : IDisposable {
             }
         }
     }
-    
+
     public void SetBlocks(BlockType* newBlocks) {
+        if (newBlocks == null) return;
         lock (_blockLock) {
+            if (_blocks == null) return;
             System.Buffer.MemoryCopy(newBlocks, _blocks, BlockCount * sizeof(BlockType), BlockCount * sizeof(BlockType));
-            
+
             // Check if entirely empty
             bool allAir = true;
             for (int i = 0; i < BlockCount; i++) {
@@ -72,6 +84,7 @@ public unsafe class Chunk : IDisposable {
     public BlockType GetBlock(int x, int y, int z) {
         if (x < 0 || x >= Size || y < 0 || y >= Size || z < 0 || z >= Size) return BlockType.Air;
         lock (_blockLock) {
+            if (_blocks == null) return BlockType.Air;
             return _blocks[GetIndex(x, y, z)];
         }
     }
@@ -83,7 +96,7 @@ public unsafe class Chunk : IDisposable {
     public void MarkDirty() {
         IsMeshDirty = true;
     }
-    
+
     public bool HasPendingMesh => _hasPendingMesh;
 
     public (List<Vertex> vertices, List<uint> indices) TakePendingMesh() {
@@ -100,6 +113,12 @@ public unsafe class Chunk : IDisposable {
         if (indices != null) _indexListPool.Enqueue(indices);
     }
 
+    private struct MeshTaskState {
+        public Chunk Chunk;
+        public BlockType* Snapshot;
+        public nuint SnapshotSize;
+    }
+
     public void Update() {
         if (IsMeshDirty && !_isMeshing) {
             if (IsEmpty) {
@@ -109,22 +128,35 @@ public unsafe class Chunk : IDisposable {
 
             _isMeshing = true;
             IsMeshDirty = false;
-            
-            nuint bufferSize = (nuint)(BlockCount * sizeof(BlockType));
-            BlockType* blocksSnapshot = (BlockType*)UnmanagedPool.Rent(bufferSize);
+
+            nuint bufferSize = (nuint) (BlockCount * sizeof(BlockType));
+            BlockType* blocksSnapshot = (BlockType*) UnmanagedPool.Rent(bufferSize);
             lock (_blockLock) {
+                if (_blocks == null) {
+                    UnmanagedPool.Return(blocksSnapshot, bufferSize);
+                    _isMeshing = false;
+                    return;
+                }
                 System.Buffer.MemoryCopy(_blocks, blocksSnapshot, BlockCount * sizeof(BlockType), BlockCount * sizeof(BlockType));
             }
 
             System.Threading.Interlocked.Increment(ref _activeMeshingTasks);
+
+            var state = new MeshTaskState {
+                Chunk = this,
+                Snapshot = blocksSnapshot,
+                SnapshotSize = bufferSize
+            };
+
             Task.Run(() => {
+                var s = state;
                 try {
-                    BuildMeshTask(blocksSnapshot);
+                    s.Chunk.BuildMeshTask(s.Snapshot);
                 } catch (Exception e) {
                     Console.WriteLine($"Mesh build failed: {e}");
                 } finally {
-                    UnmanagedPool.Return(blocksSnapshot, bufferSize);
-                    _isMeshing = false;
+                    UnmanagedPool.Return(s.Snapshot, s.SnapshotSize);
+                    s.Chunk._isMeshing = false;
                     System.Threading.Interlocked.Decrement(ref _activeMeshingTasks);
                 }
             });
@@ -135,9 +167,9 @@ public unsafe class Chunk : IDisposable {
         const int Padding = 1;
         const int PaddedSize = Size + 2 * Padding;
         const int PaddedCount = PaddedSize * PaddedSize * PaddedSize;
-        nuint paddedBufferSize = (nuint)(PaddedCount * sizeof(BlockType));
-        
-        BlockType* paddedBlocks = (BlockType*)UnmanagedPool.Rent(paddedBufferSize);
+        nuint paddedBufferSize = (nuint) (PaddedCount * sizeof(BlockType));
+
+        BlockType* paddedBlocks = (BlockType*) UnmanagedPool.Rent(paddedBufferSize);
 
         try {
             for (int y = -1; y <= Size; y++) {
@@ -147,18 +179,20 @@ public unsafe class Chunk : IDisposable {
                         if (x >= 0 && x < Size && y >= 0 && y < Size && z >= 0 && z < Size) {
                             type = blocks[x + (y * Size) + (z * Size * Size)];
                         } else {
-                            type = _world.GetBlock((int)Position.X + x, (int)Position.Y + y, (int)Position.Z + z);
+                            type = _world.GetBlock((int) Position.X + x, (int) Position.Y + y, (int) Position.Z + z);
                         }
                         paddedBlocks[(x + Padding) + (y + Padding) * PaddedSize + (z + Padding) * PaddedSize * PaddedSize] = type;
                     }
                 }
             }
 
-            if (!_vertexListPool.TryDequeue(out var vertices)) vertices = new List<Vertex>();
-            else vertices.Clear();
+            if (!_vertexListPool.TryDequeue(out var vertices)) {
+                vertices = new List<Vertex>(2048);
+            } else vertices.Clear();
 
-            if (!_indexListPool.TryDequeue(out var indices)) indices = new List<uint>();
-            else indices.Clear();
+            if (!_indexListPool.TryDequeue(out var indices)) {
+                indices = new List<uint>(2048);
+            } else indices.Clear();
 
             int vertexCount = 0;
 
@@ -170,77 +204,200 @@ public unsafe class Chunk : IDisposable {
                 return GetBlockLocal(x, y, z) == BlockType.Air;
             }
 
-            nuint maskSize = (nuint)(Size * Size * sizeof(BlockType));
-            BlockType* mask = (BlockType*)UnmanagedPool.Rent(maskSize);
+            nuint maskSize = (nuint) (Size * Size * sizeof(BlockType));
+            BlockType* mask = (BlockType*) UnmanagedPool.Rent(maskSize);
             try {
-                void MeshFace(int axis1Max, int axis2Max, int sliceMax, 
-                              Func<int, int, int, BlockType> getMaskAt, 
-                              Action<int, int, int, int, int, float> addFace) {
-                    
-                    for (int slice = 0; slice < sliceMax; slice++) {
-                        for (int ax2 = 0; ax2 < axis2Max; ax2++) {
-                            for (int ax1 = 0; ax1 < axis1Max; ax1++) {
-                                mask[ax1 + ax2 * axis1Max] = getMaskAt(ax1, ax2, slice);
-                            }
+                // TOP FACE (y + 1)
+                for (int y = 0; y < Size; y++) {
+                    for (int z = 0; z < Size; z++) {
+                        for (int x = 0; x < Size; x++) {
+                            mask[x + z * Size] = (IsTransparentLocal(x, y + 1, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air;
                         }
-
-                        for (int j = 0; j < axis2Max; j++) {
-                            for (int i = 0; i < axis1Max; i++) {
-                                var type = mask[i + j * axis1Max];
-                                if (type != BlockType.Air) {
-                                    int w = 1;
-                                    while (i + w < axis1Max && mask[(i + w) + j * axis1Max] == type) w++;
-
-                                    int h = 1;
-                                    bool done = false;
-                                    while (j + h < axis2Max) {
-                                        for (int k = 0; k < w; k++) {
-                                            if (mask[(i + k) + (j + h) * axis1Max] != type) {
-                                                done = true;
-                                                break;
-                                            }
-                                        }
-                                        if (done) break;
-                                        h++;
+                    }
+                    for (int j = 0; j < Size; j++) {
+                        for (int i = 0; i < Size; i++) {
+                            var type = mask[i + j * Size];
+                            if (type != BlockType.Air) {
+                                int w = 1;
+                                while (i + w < Size && mask[(i + w) + j * Size] == type) w++;
+                                int h = 1;
+                                bool done = false;
+                                while (j + h < Size) {
+                                    for (int k = 0; k < w; k++) {
+                                        if (mask[(i + k) + (j + h) * Size] != type) { done = true; break; }
                                     }
-
-                                    addFace(i, j, slice, w, h, (float)type - 1);
-
-                                    for (int dy = 0; dy < h; dy++) {
-                                        for (int dx = 0; dx < w; dx++) {
-                                            mask[(i + dx) + (j + dy) * axis1Max] = BlockType.Air;
-                                        }
-                                    }
-                                    i += w - 1;
+                                    if (done) break;
+                                    h++;
                                 }
+                                AddFaceTop(i, y, j, w, h, (float) type - 1, ref vertexCount, vertices, indices);
+                                for (int dy = 0; dy < h; dy++) {
+                                    for (int dx = 0; dx < w; dx++) { mask[(i + dx) + (j + dy) * Size] = BlockType.Air; }
+                                }
+                                i += w - 1;
                             }
                         }
                     }
                 }
 
-                MeshFace(Size, Size, Size, 
-                    (x, z, y) => (IsTransparentLocal(x, y + 1, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air,
-                    (x, z, y, w, h, tex) => AddFaceTop(x, y, z, w, h, tex, ref vertexCount, vertices, indices));
+                // BOTTOM FACE (y - 1)
+                for (int y = 0; y < Size; y++) {
+                    for (int z = 0; z < Size; z++) {
+                        for (int x = 0; x < Size; x++) {
+                            mask[x + z * Size] = (IsTransparentLocal(x, y - 1, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air;
+                        }
+                    }
+                    for (int j = 0; j < Size; j++) {
+                        for (int i = 0; i < Size; i++) {
+                            var type = mask[i + j * Size];
+                            if (type != BlockType.Air) {
+                                int w = 1;
+                                while (i + w < Size && mask[(i + w) + j * Size] == type) w++;
+                                int h = 1;
+                                bool done = false;
+                                while (j + h < Size) {
+                                    for (int k = 0; k < w; k++) {
+                                        if (mask[(i + k) + (j + h) * Size] != type) { done = true; break; }
+                                    }
+                                    if (done) break;
+                                    h++;
+                                }
+                                AddFaceBottom(i, y, j, w, h, (float) type - 1, ref vertexCount, vertices, indices);
+                                for (int dy = 0; dy < h; dy++) {
+                                    for (int dx = 0; dx < w; dx++) { mask[(i + dx) + (j + dy) * Size] = BlockType.Air; }
+                                }
+                                i += w - 1;
+                            }
+                        }
+                    }
+                }
 
-                MeshFace(Size, Size, Size,
-                    (x, z, y) => (IsTransparentLocal(x, y - 1, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air,
-                    (x, z, y, w, h, tex) => AddFaceBottom(x, y, z, w, h, tex, ref vertexCount, vertices, indices));
+                // RIGHT FACE (x + 1)
+                for (int x = 0; x < Size; x++) {
+                    for (int y = 0; y < Size; y++) {
+                        for (int z = 0; z < Size; z++) {
+                            mask[z + y * Size] = (IsTransparentLocal(x + 1, y, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air;
+                        }
+                    }
+                    for (int j = 0; j < Size; j++) {
+                        for (int i = 0; i < Size; i++) {
+                            var type = mask[i + j * Size];
+                            if (type != BlockType.Air) {
+                                int w = 1;
+                                while (i + w < Size && mask[(i + w) + j * Size] == type) w++;
+                                int h = 1;
+                                bool done = false;
+                                while (j + h < Size) {
+                                    for (int k = 0; k < w; k++) {
+                                        if (mask[(i + k) + (j + h) * Size] != type) { done = true; break; }
+                                    }
+                                    if (done) break;
+                                    h++;
+                                }
+                                AddFaceRight(x, j, i, w, h, (float) type - 1, ref vertexCount, vertices, indices);
+                                for (int dy = 0; dy < h; dy++) {
+                                    for (int dx = 0; dx < w; dx++) { mask[(i + dx) + (j + dy) * Size] = BlockType.Air; }
+                                }
+                                i += w - 1;
+                            }
+                        }
+                    }
+                }
 
-                MeshFace(Size, Size, Size,
-                    (z, y, x) => (IsTransparentLocal(x + 1, y, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air,
-                    (z, y, x, w, h, tex) => AddFaceRight(x, y, z, w, h, tex, ref vertexCount, vertices, indices));
+                // LEFT FACE (x - 1)
+                for (int x = 0; x < Size; x++) {
+                    for (int y = 0; y < Size; y++) {
+                        for (int z = 0; z < Size; z++) {
+                            mask[z + y * Size] = (IsTransparentLocal(x - 1, y, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air;
+                        }
+                    }
+                    for (int j = 0; j < Size; j++) {
+                        for (int i = 0; i < Size; i++) {
+                            var type = mask[i + j * Size];
+                            if (type != BlockType.Air) {
+                                int w = 1;
+                                while (i + w < Size && mask[(i + w) + j * Size] == type) w++;
+                                int h = 1;
+                                bool done = false;
+                                while (j + h < Size) {
+                                    for (int k = 0; k < w; k++) {
+                                        if (mask[(i + k) + (j + h) * Size] != type) { done = true; break; }
+                                    }
+                                    if (done) break;
+                                    h++;
+                                }
+                                AddFaceLeft(x, j, i, w, h, (float) type - 1, ref vertexCount, vertices, indices);
+                                for (int dy = 0; dy < h; dy++) {
+                                    for (int dx = 0; dx < w; dx++) { mask[(i + dx) + (j + dy) * Size] = BlockType.Air; }
+                                }
+                                i += w - 1;
+                            }
+                        }
+                    }
+                }
 
-                MeshFace(Size, Size, Size,
-                    (z, y, x) => (IsTransparentLocal(x - 1, y, z) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air,
-                    (z, y, x, w, h, tex) => AddFaceLeft(x, y, z, w, h, tex, ref vertexCount, vertices, indices));
+                // FRONT FACE (z + 1)
+                for (int z = 0; z < Size; z++) {
+                    for (int y = 0; y < Size; y++) {
+                        for (int x = 0; x < Size; x++) {
+                            mask[x + y * Size] = (IsTransparentLocal(x, y, z + 1) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air;
+                        }
+                    }
+                    for (int j = 0; j < Size; j++) {
+                        for (int i = 0; i < Size; i++) {
+                            var type = mask[i + j * Size];
+                            if (type != BlockType.Air) {
+                                int w = 1;
+                                while (i + w < Size && mask[(i + w) + j * Size] == type) w++;
+                                int h = 1;
+                                bool done = false;
+                                while (j + h < Size) {
+                                    for (int k = 0; k < w; k++) {
+                                        if (mask[(i + k) + (j + h) * Size] != type) { done = true; break; }
+                                    }
+                                    if (done) break;
+                                    h++;
+                                }
+                                AddFaceFront(i, j, z, w, h, (float) type - 1, ref vertexCount, vertices, indices);
+                                for (int dy = 0; dy < h; dy++) {
+                                    for (int dx = 0; dx < w; dx++) { mask[(i + dx) + (j + dy) * Size] = BlockType.Air; }
+                                }
+                                i += w - 1;
+                            }
+                        }
+                    }
+                }
 
-                MeshFace(Size, Size, Size,
-                    (x, y, z) => (IsTransparentLocal(x, y, z + 1) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air,
-                    (x, y, z, w, h, tex) => AddFaceFront(x, y, z, w, h, tex, ref vertexCount, vertices, indices));
-
-                MeshFace(Size, Size, Size,
-                    (x, y, z) => (IsTransparentLocal(x, y, z - 1) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air,
-                    (x, y, z, w, h, tex) => AddFaceBack(x, y, z, w, h, tex, ref vertexCount, vertices, indices));
+                // BACK FACE (z - 1)
+                for (int z = 0; z < Size; z++) {
+                    for (int y = 0; y < Size; y++) {
+                        for (int x = 0; x < Size; x++) {
+                            mask[x + y * Size] = (IsTransparentLocal(x, y, z - 1) && GetBlockLocal(x, y, z) != BlockType.Air) ? GetBlockLocal(x, y, z) : BlockType.Air;
+                        }
+                    }
+                    for (int j = 0; j < Size; j++) {
+                        for (int i = 0; i < Size; i++) {
+                            var type = mask[i + j * Size];
+                            if (type != BlockType.Air) {
+                                int w = 1;
+                                while (i + w < Size && mask[(i + w) + j * Size] == type) w++;
+                                int h = 1;
+                                bool done = false;
+                                while (j + h < Size) {
+                                    for (int k = 0; k < w; k++) {
+                                        if (mask[(i + k) + (j + h) * Size] != type) { done = true; break; }
+                                    }
+                                    if (done) break;
+                                    h++;
+                                }
+                                AddFaceBack(i, j, z, w, h, (float) type - 1, ref vertexCount, vertices, indices);
+                                for (int dy = 0; dy < h; dy++) {
+                                    for (int dx = 0; dx < w; dx++) { mask[(i + dx) + (j + dy) * Size] = BlockType.Air; }
+                                }
+                                i += w - 1;
+                            }
+                        }
+                    }
+                }
 
             } finally {
                 UnmanagedPool.Return(mask, maskSize);
@@ -314,9 +471,13 @@ public unsafe class Chunk : IDisposable {
     }
 
     public void Dispose() {
-        if (_blocks != null) {
-            UnmanagedPool.Return(_blocks, (nuint)(BlockCount * sizeof(BlockType)));
-            _blocks = null;
+        lock (_blockLock) {
+            if (IsDisposed) return;
+            IsDisposed = true;
+            if (_blocks != null) {
+                UnmanagedPool.Return(_blocks, (nuint) (BlockCount * sizeof(BlockType)));
+                _blocks = null;
+            }
         }
         GC.SuppressFinalize(this);
     }

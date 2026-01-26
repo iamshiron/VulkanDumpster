@@ -12,8 +12,8 @@ namespace Shiron.VulkanDumpster.Vulkan;
 /// </summary>
 public class ChunkHeap : IDisposable {
     private readonly VulkanContext _ctx;
-    private readonly VulkanBuffer _vertexBuffer;
-    private readonly VulkanBuffer _indexBuffer;
+    private VulkanBuffer _vertexBuffer;
+    private VulkanBuffer _indexBuffer;
 
     public VulkanBuffer VertexBuffer => _vertexBuffer;
     public VulkanBuffer IndexBuffer => _indexBuffer;
@@ -25,12 +25,12 @@ public class ChunkHeap : IDisposable {
         _ctx = ctx;
         _vertexBuffer = new VulkanBuffer(ctx.Vk, ctx.Device, ctx.PhysicalDevice,
             vertexBufferSize,
-            BufferUsageFlags.VertexBufferBit | BufferUsageFlags.TransferDstBit,
+            BufferUsageFlags.VertexBufferBit | BufferUsageFlags.TransferDstBit | BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.DeviceLocalBit);
 
         _indexBuffer = new VulkanBuffer(ctx.Vk, ctx.Device, ctx.PhysicalDevice,
             indexBufferSize,
-            BufferUsageFlags.IndexBufferBit | BufferUsageFlags.TransferDstBit,
+            BufferUsageFlags.IndexBufferBit | BufferUsageFlags.TransferDstBit | BufferUsageFlags.TransferSrcBit,
             MemoryPropertyFlags.DeviceLocalBit);
 
         _vertexAllocator = new SimpleAllocator(vertexBufferSize);
@@ -39,13 +39,90 @@ public class ChunkHeap : IDisposable {
 
     public Allocation Allocate(ulong vertexSize, ulong indexSize) {
         if (!_vertexAllocator.TryAllocate(vertexSize, out ulong vOffset)) {
-            throw new Exception("ChunkHeap vertex buffer full!");
+            GrowVertex(vertexSize);
+            if (!_vertexAllocator.TryAllocate(vertexSize, out vOffset)) {
+                throw new Exception("Failed to allocate vertex buffer even after growth");
+            }
         }
         if (!_indexAllocator.TryAllocate(indexSize, out ulong iOffset)) {
-            _vertexAllocator.Free(vOffset, vertexSize);
-            throw new Exception("ChunkHeap index buffer full!");
+            GrowIndex(indexSize);
+            if (!_indexAllocator.TryAllocate(indexSize, out iOffset)) {
+                _vertexAllocator.Free(vOffset, vertexSize);
+                throw new Exception("Failed to allocate index buffer even after growth");
+            }
         }
         return new Allocation(vOffset, iOffset, vertexSize, indexSize);
+    }
+
+    private unsafe void GrowVertex(ulong requiredSize) {
+        ulong oldSize = _vertexAllocator.TotalSize;
+        ulong newSize = Math.Max(oldSize * 2, oldSize + ((requiredSize + 3) & ~3UL));
+        Console.WriteLine($"[ChunkHeap] Growing vertex buffer: {oldSize / 1024 / 1024}MB -> {newSize / 1024 / 1024}MB");
+
+        var newBuffer = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
+            newSize,
+            BufferUsageFlags.VertexBufferBit | BufferUsageFlags.TransferDstBit | BufferUsageFlags.TransferSrcBit,
+            MemoryPropertyFlags.DeviceLocalBit);
+        
+        CopyBuffer(_vertexBuffer.Handle, newBuffer.Handle, oldSize);
+        
+        var oldBuffer = _vertexBuffer;
+        _ctx.EnqueueDispose(() => oldBuffer.Dispose());
+        _vertexBuffer = newBuffer;
+        _vertexAllocator.Grow(newSize);
+    }
+
+    private unsafe void GrowIndex(ulong requiredSize) {
+        ulong oldSize = _indexAllocator.TotalSize;
+        ulong newSize = Math.Max(oldSize * 2, oldSize + ((requiredSize + 3) & ~3UL));
+        Console.WriteLine($"[ChunkHeap] Growing index buffer: {oldSize / 1024 / 1024}MB -> {newSize / 1024 / 1024}MB");
+
+        var newBuffer = new VulkanBuffer(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice,
+            newSize,
+            BufferUsageFlags.IndexBufferBit | BufferUsageFlags.TransferDstBit | BufferUsageFlags.TransferSrcBit,
+            MemoryPropertyFlags.DeviceLocalBit);
+        
+        CopyBuffer(_indexBuffer.Handle, newBuffer.Handle, oldSize);
+        
+        var oldBuffer = _indexBuffer;
+        _ctx.EnqueueDispose(() => oldBuffer.Dispose());
+        _indexBuffer = newBuffer;
+        _indexAllocator.Grow(newSize);
+    }
+
+    private unsafe void CopyBuffer(Silk.NET.Vulkan.Buffer src, Silk.NET.Vulkan.Buffer dst, ulong size) {
+        var allocInfo = new CommandBufferAllocateInfo {
+            SType = StructureType.CommandBufferAllocateInfo,
+            Level = CommandBufferLevel.Primary,
+            CommandPool = _ctx.CommandPool,
+            CommandBufferCount = 1
+        };
+        _ctx.Vk.AllocateCommandBuffers(_ctx.Device, &allocInfo, out var cmd);
+
+        var beginInfo = new CommandBufferBeginInfo {
+            SType = StructureType.CommandBufferBeginInfo,
+            Flags = CommandBufferUsageFlags.OneTimeSubmitBit
+        };
+        _ctx.Vk.BeginCommandBuffer(cmd, &beginInfo);
+
+        var copyRegion = new BufferCopy {
+            SrcOffset = 0,
+            DstOffset = 0,
+            Size = size
+        };
+        _ctx.Vk.CmdCopyBuffer(cmd, src, dst, 1, &copyRegion);
+
+        _ctx.Vk.EndCommandBuffer(cmd);
+
+        var submitInfo = new SubmitInfo {
+            SType = StructureType.SubmitInfo,
+            CommandBufferCount = 1,
+            PCommandBuffers = &cmd
+        };
+        _ctx.Vk.QueueSubmit(_ctx.GraphicsQueue, 1, &submitInfo, default);
+        _ctx.Vk.QueueWaitIdle(_ctx.GraphicsQueue);
+
+        _ctx.Vk.FreeCommandBuffers(_ctx.Device, _ctx.CommandPool, 1, &cmd);
     }
 
     public void Free(Allocation allocation) {
@@ -88,11 +165,19 @@ public class ChunkHeap : IDisposable {
 
     private class SimpleAllocator {
         private readonly List<Range> _freeRanges = new();
-        public ulong TotalSize { get; }
+        public ulong TotalSize { get; private set; }
 
         public SimpleAllocator(ulong totalSize) {
             TotalSize = totalSize;
             _freeRanges.Add(new Range(0, totalSize));
+        }
+
+        public void Grow(ulong newTotalSize) {
+            if (newTotalSize <= TotalSize) return;
+            ulong additional = newTotalSize - TotalSize;
+            ulong oldSize = TotalSize;
+            TotalSize = newTotalSize;
+            Free(oldSize, additional);
         }
 
         public bool TryAllocate(ulong size, out ulong offset) {

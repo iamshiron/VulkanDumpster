@@ -35,6 +35,31 @@ public static class Profiler {
         }
     }
 
+    public struct ProfileResult {
+        public string Name;
+        public double Average;
+        public double Max;
+    }
+
+    public static List<ProfileResult> GetResults() {
+        var results = new List<ProfileResult>(_history.Count);
+        foreach (var pair in _history) {
+            var history = pair.Value.history;
+            if (history.Count > 0) {
+                double sum = 0;
+                for (int i = 0; i < history.Count; i++) {
+                    sum += history[i];
+                }
+                results.Add(new ProfileResult {
+                    Name = pair.Key,
+                    Average = sum / history.Count,
+                    Max = pair.Value.max
+                });
+            }
+        }
+        return results;
+    }
+
     public static void ForEachResult(Action<string, double, double> action) {
         foreach (var pair in _history) {
             var history = pair.Value.history;
@@ -89,6 +114,7 @@ public static class Profiler {
             public int TotalRegions { get; set; }
             public int RenderedRegions { get; set; }
             public int ChunkUpdates { get; set; }
+            public float AllocPerFrameKB { get; set; }
         }
 
         public class VulkanStats {

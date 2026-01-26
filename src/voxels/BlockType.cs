@@ -1,6 +1,6 @@
 namespace Shiron.VulkanDumpster.Voxels;
 
-public enum BlockType : ushort {
+public enum BlockType : byte {
     Air = 0,
     Grass = 1,
     Dirt = 2,
