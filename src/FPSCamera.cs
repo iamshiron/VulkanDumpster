@@ -1,20 +1,21 @@
 using System.Numerics;
 using Silk.NET.Input;
 using Silk.NET.Maths;
+using Shiron.VulkanDumpster.Voxels;
 namespace Shiron.VulkanDumpster;
 
 public class FPSCamera : ICamera {
-    public Vector3D<float> Position { get; set; } = new(0, 0, 3);
+    public Position Position { get; set; } = new(0, 0, 3);
     public Vector3D<float> Front { get; private set; } = new(0, 0, -1);
     public Vector3D<float> Up { get; private set; } = Vector3D<float>.UnitY;
     public Vector3D<float> Right { get; private set; } = Vector3D<float>.UnitX;
     public Vector3D<float> WorldUp { get; } = Vector3D<float>.UnitY;
     public float Yaw { get; set; } = -90f;
     public float Pitch { get; set; } = 0f;
-    public float MoveSpeed { get; set; } = 2000f;
+    public float MoveSpeed { get; set; } = 500f;
     public float MouseSensitivity { get; set; } = 0.1f;
     public float Zoom { get; set; } = 45f;
-    public FPSCamera(Vector3D<float> position) {
+    public FPSCamera(Position position) {
         Position = position;
         UpdateCameraVectors();
     }

@@ -8,6 +8,7 @@ using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Shiron.VulkanDumpster.Vulkan;
 using Shiron.VulkanDumpster;
+using Shiron.VulkanDumpster.Voxels.Generation;
 
 namespace Shiron.VulkanDumpster.Voxels;
 
@@ -18,6 +19,7 @@ public class World : IDisposable {
     public int TotalRegionsCount => _regions.Count;
     public int RenderedRegionsCount { get; private set; }
     public int LastFrameUpdates { get; private set; }
+    public IWorldGenerator Generator => _generator;
 
     private readonly ChunkGrid _grid;
     private readonly List<Region> _regionList = new();
@@ -33,13 +35,15 @@ public class World : IDisposable {
     private readonly List<DrawIndexedIndirectCommand> _indirectCommands = new();
     private readonly BlockingCollection<YChunk> _chunkGenerationQueue = new();
     private readonly ConcurrentQueue<YChunk> _failedChunks = new();
+    private readonly IWorldGenerator _generator;
     private readonly Task _workerTask;
     private bool _disposed;
 
-    public World(VulkanContext ctx, Renderer renderer, AppSettings settings) {
+    public World(VulkanContext ctx, Renderer renderer, AppSettings settings, IWorldGenerator generator) {
         _ctx = ctx;
         _renderer = renderer;
         _settings = settings;
+        _generator = generator;
         _batchUploader = new BatchUploader(_ctx, renderer);
         _grid = new ChunkGrid(_settings.RenderDistance);
 
@@ -57,7 +61,8 @@ public class World : IDisposable {
         _workerTask = Task.Factory.StartNew(() => {
             foreach (var chunk in _chunkGenerationQueue.GetConsumingEnumerable()) {
                 try {
-                    GenerateTerrain(chunk, chunk.ChunkPos);
+                    _generator.Generate(chunk);
+                    OnChunkGenerated(chunk.ChunkPos);
                 } catch (Exception e) {
                     Console.WriteLine($"[World] Chunk generation failed for {chunk.ChunkPos}: {e}");
                     _failedChunks.Enqueue(chunk);
@@ -66,7 +71,7 @@ public class World : IDisposable {
         }, TaskCreationOptions.LongRunning);
     }
 
-    public void Update(Vector3D<float> cameraPos) {
+    public void Update(Position cameraPos) {
         // Handle failed chunks from worker thread
         while (_failedChunks.TryDequeue(out var failedChunk)) {
             if (_grid.GetChunk(failedChunk.ChunkPos) == failedChunk) {
@@ -74,7 +79,7 @@ public class World : IDisposable {
             }
         }
 
-        var centerChunk = GetChunkPos((int) cameraPos.X, (int) cameraPos.Z);
+        var centerChunk = cameraPos.GetChunkPos();
         
         if (_lastCenterChunk != centerChunk) {
             _lastCenterChunk = centerChunk;
@@ -165,45 +170,6 @@ public class World : IDisposable {
     private void UpdateNeighbor(int x, int z) {
         var neighbor = _grid.GetChunk(new Vector2D<int>(x, z));
         neighbor?.MarkDirty();
-    }
-
-    private unsafe void GenerateTerrain(YChunk chunk, Vector2D<int> chunkPos) {
-        if (chunk == null) return;
-        int baseX = chunkPos.X * Chunk.Size;
-        int baseZ = chunkPos.Y * Chunk.Size;
-        int totalBlockCount = Chunk.Size * Chunk.Size * YChunk.TotalHeight;
-        BlockType* columnBlocks = (BlockType*)UnmanagedPool.Rent((nuint)(totalBlockCount * sizeof(BlockType)));
-        if (columnBlocks == null) {
-            throw new OutOfMemoryException("Failed to rent memory for columnBlocks");
-        }
-        System.Runtime.CompilerServices.Unsafe.InitBlock(columnBlocks, 0, (uint)(totalBlockCount * sizeof(BlockType)));
-
-        try {
-            for (int x = 0; x < Chunk.Size; x++) {
-                for (int z = 0; z < Chunk.Size; z++) {
-                    int worldX = baseX + x;
-                    int worldZ = baseZ + z;
-                    float noise = MathF.Sin(worldX * 0.05f) * 10 + MathF.Cos(worldZ * 0.05f) * 10 + 64;
-                    int height = Math.Clamp((int) noise, 1, YChunk.TotalHeight - 1);
-                    for (int y = 0; y < height; y++) {
-                        BlockType type = BlockType.Stone;
-                        if (y == height - 1) type = BlockType.Grass;
-                        else if (y > height - 5) type = BlockType.Dirt;
-                        
-                        int chunkY = y / Chunk.Size;
-                        int localY = y % Chunk.Size;
-                        int idx = x + (localY * Chunk.Size) + (z * Chunk.Size * Chunk.Size) + (chunkY * Chunk.BlockCount);
-                        columnBlocks[idx] = type;
-                    }
-                }
-            }
-            for (int i = 0; i < YChunk.HeightInChunks; i++) {
-                chunk.SetChunkBlocks(i, columnBlocks + (i * Chunk.BlockCount));
-            }
-        } finally {
-            UnmanagedPool.Return(columnBlocks, (nuint)(totalBlockCount * sizeof(BlockType)));
-        }
-        OnChunkGenerated(chunkPos);
     }
 
     public void SetBlock(int x, int y, int z, BlockType type) {

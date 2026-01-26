@@ -287,6 +287,16 @@ public unsafe class TextRenderer : IDisposable {
         }
     }
 
+    public float GetTextWidth(string text, float scale) {
+        float width = 0;
+        foreach (char c in text) {
+            if (_characters.TryGetValue(c, out var ch)) {
+                width += ch.Advance * scale;
+            }
+        }
+        return width;
+    }
+
     public void Render(VulkanCommandBuffer cmd, Vector2D<int> screenSize, Vector4 color) {
         if (_vertices.Count == 0) return;
 
