@@ -172,6 +172,7 @@ public class Program {
         _context.Vk.DestroyShaderModule(_context.Device, frag, null);
     }
     private unsafe void Render(double delta) {
+        Profiler.Begin("Total Frame");
         _elapsedTime += delta;
         _frameCount++;
         _fpsTimer += delta;
@@ -179,33 +180,76 @@ public class Program {
             _fpsTimer = 0;
             _frameCount = 0;
         }
+
+        Profiler.Begin("World Update");
         _world.Update(_camera.Position);
+        Profiler.End("World Update");
+
         // Debug: Draw borders for active chunks?
         // For now, let's just clear debug
         _debugRenderer.Begin();
+
+        Profiler.Begin("Begin Frame");
         var cmd = _renderer.BeginFrame();
-        if (cmd.Handle.Handle == 0) return;
+        Profiler.End("Begin Frame");
+
+        if (cmd.Handle.Handle == 0) {
+            Profiler.End("Total Frame");
+            return;
+        }
+
+        _renderer.GPUProfiler.BeginSection(cmd.Handle, "Main Pass");
+
         int frameIndex = _renderer.CurrentFrameIndex;
         var viewProj = UpdateUniformBuffer(frameIndex);
         _frustum.Update(viewProj);
+
         // Draw World
+        Profiler.Begin("World Render");
         var activePipeline = _isWireframe ? _wireframePipeline : _trianglePipeline;
         cmd.BindPipeline(activePipeline);
         cmd.BindDescriptorSets(activePipeline, new[] { _descriptorSets[frameIndex] });
         _world.Render(cmd, activePipeline, _descriptorSets[frameIndex], _frustum);
+        Profiler.End("World Render");
+
         // Draw Debug
         _debugRenderer.Render(cmd, _descriptorSets[frameIndex]);
 
+        _renderer.GPUProfiler.EndSection(cmd.Handle, "Main Pass");
+
         // Draw Text
+        Profiler.Begin("Text Render");
         _textRenderer.Begin();
         _textRenderer.DrawText($"FPS: {1.0/delta:F1}", 10, 30, 1.0f, new Vector4(1, 1, 1, 1));
         _textRenderer.DrawText($"Total Chunks: {_world.ChunkCount * YChunk.HeightInChunks}", 10, 55, 1.0f, new Vector4(1, 1, 1, 1));
         _textRenderer.DrawText($"Rendered: {_world.RenderedChunksCount}", 10, 80, 1.0f, new Vector4(1, 1, 1, 1));
         _textRenderer.DrawText($"Updates: {_world.LastFrameUpdates}", 10, 105, 1.0f, new Vector4(1, 1, 1, 1));
         _textRenderer.DrawText($"Pos: {_camera.Position.X:F1}, {_camera.Position.Y:F1}, {_camera.Position.Z:F1}", 10, 130, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.Render(cmd, new Vector2D<int>((int)_renderer.SwapchainExtent.Width, (int)_renderer.SwapchainExtent.Height), new Vector4(1, 1, 1, 1));
+        
+        // Display Profiler Results
+        int yOffset = 160;
+        _textRenderer.DrawText("--- CPU Profiler ---", 10, yOffset, 0.8f, new Vector4(1, 0.8f, 0, 1));
+        yOffset += 20;
+        foreach (var (name, time) in Profiler.GetAverageResults()) {
+            _textRenderer.DrawText($"{name}: {time:F3} ms", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 20;
+        }
 
+        yOffset += 10;
+        _textRenderer.DrawText("--- GPU Profiler ---", 10, yOffset, 0.8f, new Vector4(0, 0.8f, 1, 1));
+        yOffset += 20;
+        foreach (var (name, time) in _renderer.GPUProfiler.GetLatestResults()) {
+            _textRenderer.DrawText($"{name}: {time:F3} ms", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 20;
+        }
+
+        _textRenderer.Render(cmd, new Vector2D<int>((int)_renderer.SwapchainExtent.Width, (int)_renderer.SwapchainExtent.Height), new Vector4(1, 1, 1, 1));
+        Profiler.End("Text Render");
+
+        Profiler.Begin("End Frame");
         _renderer.EndFrame();
+        Profiler.End("End Frame");
+        Profiler.End("Total Frame");
     }
     private unsafe Matrix4X4<float> UpdateUniformBuffer(int index) {
         var extent = _renderer.SwapchainExtent;

@@ -29,12 +29,15 @@ public unsafe class Renderer : IDisposable {
     public Format DepthFormat => _depthFormat;
     private uint _imageIndex;
     private CommandBuffer _currentCmd;
+    public GPUProfiler GPUProfiler { get; private set; }
+
     public Renderer(VulkanContext ctx, IWindow window) {
         _ctx = ctx;
         _window = window;
         _window.Resize += OnResize;
         RecreateSwapchain();
         CreateFrameResources();
+        GPUProfiler = new GPUProfiler(_ctx.Vk, _ctx.Device, _ctx.PhysicalDevice, FrameOverlap);
     }
     private void OnResize(Vector2D<int> size) {
         _resized = true;
@@ -151,6 +154,9 @@ public unsafe class Renderer : IDisposable {
         if (_window.Size.X == 0 || _window.Size.Y == 0) return default;
         var fence = CurrentFrame.RenderFence;
         _ctx.Vk.WaitForFences(_ctx.Device, 1, &fence, true, 1_000_000_000);
+        
+        GPUProfiler.BeginFrame(CurrentFrameIndex);
+
         // 1. Process resources queued for deletion on THIS frame (now safe to delete)
         foreach (var action in CurrentFrame.DeletionQueue) {
             action();
@@ -183,6 +189,7 @@ public unsafe class Renderer : IDisposable {
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit
         };
         _ctx.Vk.BeginCommandBuffer(_currentCmd, &beginInfo);
+        GPUProfiler.Reset(_currentCmd);
         ImageUtils.TransitionImage(_ctx.Vk, _currentCmd, _swapchainImages[_imageIndex],
             ImageLayout.Undefined, ImageLayout.ColorAttachmentOptimal);
         ImageUtils.TransitionImage(_ctx.Vk, _currentCmd, _depthImage,
@@ -260,6 +267,9 @@ public unsafe class Renderer : IDisposable {
             PImageIndices = &imageIndex
         };
         var result = _ctx.KhrSwapchain.QueuePresent(_ctx.PresentQueue, &presentInfo);
+        
+        GPUProfiler.MarkSubmitted();
+
         if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr) {
             _resized = true;
         }
@@ -267,6 +277,7 @@ public unsafe class Renderer : IDisposable {
     }
     public void Dispose() {
         _ctx.Vk.DeviceWaitIdle(_ctx.Device);
+        GPUProfiler.Dispose();
         // FLUSH DELETION QUEUES
         // 1. Process all per-frame queues
         for (int i = 0; i < FrameOverlap; i++) {

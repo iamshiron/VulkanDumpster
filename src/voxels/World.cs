@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Shiron.VulkanDumpster.Vulkan;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
+using Shiron.VulkanDumpster.Vulkan;
 using Shiron.VulkanDumpster;
 namespace Shiron.VulkanDumpster.Voxels;
 
@@ -156,11 +157,13 @@ public class World : IDisposable {
         return ((n % m) + m) % m;
     }
     public void Render(VulkanCommandBuffer cmd, VulkanPipeline pipeline, DescriptorSet descriptorSet, Frustum frustum) {
+        Profiler.Begin("World Render Loop");
         int rendered = 0;
         foreach (var chunk in _chunks.Values) {
             chunk.Render(cmd, pipeline, descriptorSet, frustum, ref rendered);
         }
         RenderedChunksCount = rendered;
+        Profiler.End("World Render Loop");
     }
     public void Dispose() {
         foreach (var chunk in _chunks.Values) {
