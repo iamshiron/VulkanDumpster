@@ -131,6 +131,9 @@ public sealed unsafe class PhysicalDeviceSelector {
         // Check required extensions
         if (!CheckDeviceExtensionSupport(device))
             return false;
+        // Check for MultiDrawIndirect support
+        if (features.MultiDrawIndirect == false)
+            return false;
         // Find queue families
         indices = FindQueueFamilies(device);
         if (_requireGraphicsQueue && !indices.GraphicsFamily.HasValue)

@@ -77,7 +77,8 @@ public unsafe class VulkanContext : IDisposable {
             .AddPresentQueue()
             .ConfigureFeatures(features => {
                 features.SamplerAnisotropy(true)
-                        .FillModeNonSolid(true);
+                        .FillModeNonSolid(true)
+                        .MultiDrawIndirect(true);
             });
         Device = _logicalDeviceBuilder.Build();
         GraphicsQueue = _logicalDeviceBuilder.GetGraphicsQueue();

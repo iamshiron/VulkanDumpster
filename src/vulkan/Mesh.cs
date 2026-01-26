@@ -1,135 +1,79 @@
 using System;
 using System.Collections.Generic;
 using Silk.NET.Vulkan;
+
 namespace Shiron.VulkanDumpster.Vulkan;
+
 /// <summary>
-/// Abstraction for a renderable mesh.
-/// Manages vertex/index data and synchronizes with GPU buffers.
+/// Abstraction for a renderable mesh that lives in a ChunkHeap.
 /// </summary>
 public class Mesh : IDisposable {
     private readonly VulkanContext _ctx;
-    private List<Vertex> _vertices = new();
-    private List<uint> _indices = new();
-    private VulkanBuffer? _vertexBuffer;
-    private VulkanBuffer? _indexBuffer;
-    private bool _isDirty = true;
-    public int VertexCount => _vertices.Count;
-    public int IndexCount => _indices.Count;
-    public VulkanBuffer? VertexBuffer => _vertexBuffer;
-    public VulkanBuffer? IndexBuffer => _indexBuffer;
+    private ChunkHeap.Allocation? _allocation;
+    private int _vertexCount;
+    private int _indexCount;
+
+    public int VertexCount => _vertexCount;
+    public int IndexCount => _indexCount;
+    
+    public ulong VertexOffset => _allocation?.VertexOffset ?? 0;
+    public ulong IndexOffset => _allocation?.IndexOffset ?? 0;
+    public bool HasAllocation => _allocation != null;
+
     public Mesh(VulkanContext ctx) {
         _ctx = ctx;
     }
-    public void AddVertex(Vertex vertex) {
-        _vertices.Add(vertex);
-        _isDirty = true;
-    }
-    public void AddIndex(uint index) {
-        _indices.Add(index);
-        _isDirty = true;
-    }
-    public (List<Vertex>, List<uint>) SetData(List<Vertex> vertices, List<uint> indices) {
-        var oldV = _vertices;
-        var oldI = _indices;
-        _vertices = vertices;
-        _indices = indices;
-        _isDirty = true;
-        return (oldV, oldI);
-    }
-    public void Clear() {
-        _vertices.Clear();
-        _indices.Clear();
-        _isDirty = true;
-    }
-    public void Build() {
-        _isDirty = true;
-    }
     
-    public void UpdateGpuBuffers(BatchUploader uploader) {
-        if (!_isDirty || _vertices.Count == 0) return;
+    public void Update(BatchUploader uploader, ChunkHeap heap, ReadOnlySpan<Vertex> vertices, ReadOnlySpan<uint> indices) {
+        _vertexCount = vertices.Length;
+        _indexCount = indices.Length;
 
-        ulong requiredVertexSize = (ulong) (_vertices.Count * System.Runtime.InteropServices.Marshal.SizeOf<Vertex>());
-        if (_vertexBuffer == null || _vertexBuffer.Size < requiredVertexSize) {
-            EnsureVertexBuffer(requiredVertexSize);
-        }
-
-        var vertexSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_vertices);
-        if (!uploader.Upload(vertexSpan, _vertexBuffer!, 0)) {
-            _vertexBuffer!.UploadData(vertexSpan, _ctx.CommandPool, _ctx.GraphicsQueue, _ctx);
-        }
-
-        if (_indices.Count > 0) {
-            ulong requiredIndexSize = (ulong) (_indices.Count * sizeof(uint));
-            if (_indexBuffer == null || _indexBuffer.Size < requiredIndexSize) {
-                EnsureIndexBuffer(requiredIndexSize);
+        if (_vertexCount == 0) {
+            if (_allocation != null) {
+                heap.Free(_allocation.Value);
+                _allocation = null;
             }
-            var indexSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_indices);
-            if (!uploader.Upload(indexSpan, _indexBuffer!, 0)) {
-                 _indexBuffer!.UploadData(indexSpan, _ctx.CommandPool, _ctx.GraphicsQueue, _ctx);
+            return;
+        }
+
+        ulong requiredVertexSize = (ulong) (_vertexCount * System.Runtime.CompilerServices.Unsafe.SizeOf<Vertex>());
+        ulong requiredIndexSize = (ulong) (_indexCount * sizeof(uint));
+
+        // If we have an allocation and it's too small, free it
+        if (_allocation != null && (_allocation.Value.VertexSize < requiredVertexSize || _allocation.Value.IndexSize < requiredIndexSize)) {
+            heap.Free(_allocation.Value);
+            _allocation = null;
+        }
+
+        // If we don't have an allocation, get one
+        if (_allocation == null) {
+            _allocation = heap.Allocate(requiredVertexSize, requiredIndexSize);
+        }
+
+        // Upload
+        heap.Upload(_allocation.Value, vertices, indices, uploader);
+    }
+
+        public void Free(ChunkHeap heap) {
+
+            if (_allocation != null) {
+
+                heap.Free(_allocation.Value);
+
+                _allocation = null;
+
             }
+
         }
-        _isDirty = false;
+
+    
+
+        public void Dispose() {
+
+            // Allocation must be freed via Free(heap)
+
+        }
+
     }
 
-    private void EnsureVertexBuffer(ulong size) {
-        var oldBuffer = _vertexBuffer;
-        if (oldBuffer != null) {
-            _ctx.EnqueueDispose(() => _ctx.BufferPool.Return(oldBuffer));
-        }
-        _vertexBuffer = _ctx.BufferPool.Rent(size,
-            BufferUsageFlags.VertexBufferBit | BufferUsageFlags.TransferDstBit,
-            MemoryPropertyFlags.DeviceLocalBit);
-    }
-
-    private void EnsureIndexBuffer(ulong size) {
-        var oldBuffer = _indexBuffer;
-        if (oldBuffer != null) {
-            _ctx.EnqueueDispose(() => _ctx.BufferPool.Return(oldBuffer));
-        }
-        _indexBuffer = _ctx.BufferPool.Rent(size,
-            BufferUsageFlags.IndexBufferBit | BufferUsageFlags.TransferDstBit,
-            MemoryPropertyFlags.DeviceLocalBit);
-    }
-
-    // Legacy method kept for compatibility if needed, but updated to use pool
-    public void UpdateGpuBuffers() {
-        if (!_isDirty || _vertices.Count == 0) return;
-        ulong requiredVertexSize = (ulong) (_vertices.Count * System.Runtime.InteropServices.Marshal.SizeOf<Vertex>());
-        if (_vertexBuffer == null || _vertexBuffer.Size < requiredVertexSize) {
-            EnsureVertexBuffer(requiredVertexSize);
-        }
-        var vertexSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_vertices);
-        _vertexBuffer!.UploadData(vertexSpan, _ctx.CommandPool, _ctx.GraphicsQueue, _ctx);
-        if (_indices.Count > 0) {
-            ulong requiredIndexSize = (ulong) (_indices.Count * sizeof(uint));
-            if (_indexBuffer == null || _indexBuffer.Size < requiredIndexSize) {
-                EnsureIndexBuffer(requiredIndexSize);
-            }
-            var indexSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_indices);
-            _indexBuffer!.UploadData(indexSpan, _ctx.CommandPool, _ctx.GraphicsQueue, _ctx);
-        }
-        _isDirty = false;
-    }
-
-    public void Bind(VulkanCommandBuffer cmd) {
-        if (_vertexBuffer != null) {
-            cmd.BindVertexBuffer(_vertexBuffer);
-        }
-        if (_indexBuffer != null) {
-            cmd.BindIndexBuffer(_indexBuffer, IndexType.Uint32);
-        }
-    }
-
-    public void Dispose() {
-        var vb = _vertexBuffer;
-        var ib = _indexBuffer;
-        if (vb != null || ib != null) {
-            _ctx.EnqueueDispose(() => {
-                if (vb != null) _ctx.BufferPool.Return(vb);
-                if (ib != null) _ctx.BufferPool.Return(ib);
-            });
-        }
-        _vertexBuffer = null;
-        _indexBuffer = null;
-    }
-}
+    

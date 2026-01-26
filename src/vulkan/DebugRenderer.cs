@@ -78,7 +78,7 @@ public unsafe class DebugRenderer : IDisposable {
                .SetColorAttachmentFormat(_renderer.SwapchainImageFormat)
                .SetDepthFormat(_renderer.DepthFormat);
         var pipeline = builder.Build(_ctx.Device);
-        _pipeline = new VulkanPipeline(_ctx.Vk, _ctx.Device, pipeline, layout);
+        _pipeline = new VulkanPipeline(_ctx.Vk, _ctx.Device, pipeline, layout, "DebugLines");
         _ctx.Vk.DestroyShaderModule(_ctx.Device, vert, null);
         _ctx.Vk.DestroyShaderModule(_ctx.Device, frag, null);
     }
@@ -136,12 +136,12 @@ public unsafe class DebugRenderer : IDisposable {
         }
         cmd.BindPipeline(_pipeline, PipelineBindPoint.Graphics);
         // We reuse the global UBO descriptor set for ViewProj
-        cmd.BindDescriptorSets(_pipeline, new[] { descriptorSet });
+        cmd.BindDescriptorSets(_pipeline, descriptorSet);
         // Identity model matrix
         var pc = Matrix4X4<float>.Identity;
         cmd.PushConstants(_pipeline, ShaderStageFlags.VertexBit, pc);
         cmd.BindVertexBuffer(buffer);
-        _ctx.Vk.CmdDraw(cmd.Handle, (uint) _vertices.Count, 1, 0, 0);
+        cmd.Draw((uint) _vertices.Count);
     }
     public void Dispose() {
         var p = _pipeline;

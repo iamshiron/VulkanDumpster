@@ -193,7 +193,7 @@ public unsafe class TextRenderer : IDisposable {
                    .SetDepthFormat(_renderer.DepthFormat);
 
             var pipeline = builder.Build(_ctx.Device);
-            _pipeline = new VulkanPipeline(_ctx.Vk, _ctx.Device, pipeline, pipelineLayout);
+            _pipeline = new VulkanPipeline(_ctx.Vk, _ctx.Device, pipeline, pipelineLayout, "Text");
         }
         
         _ctx.Vk.DestroyShaderModule(_ctx.Device, vert, null);
@@ -305,7 +305,7 @@ public unsafe class TextRenderer : IDisposable {
         }
 
         cmd.BindPipeline(_pipeline);
-        cmd.BindDescriptorSets(_pipeline, new[] { _descriptorSet });
+        cmd.BindDescriptorSets(_pipeline, _descriptorSet);
         cmd.BindVertexBuffer(buffer);
 
         var ortho = Matrix4X4.CreateOrthographicOffCenter(0f, (float)screenSize.X, 0f, (float)screenSize.Y, -1f, 1f);
@@ -314,7 +314,7 @@ public unsafe class TextRenderer : IDisposable {
         
         cmd.PushConstants(_pipeline, ShaderStageFlags.VertexBit, pc);
 
-        _ctx.Vk.CmdDraw(cmd.Handle, (uint)_vertices.Count, 1, 0, 0);
+        cmd.Draw((uint)_vertices.Count);
     }
 
     public void Dispose() {

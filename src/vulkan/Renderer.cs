@@ -11,6 +11,7 @@ public unsafe class Renderer : IDisposable {
     private SwapchainKHR _swapchain;
     private Image[] _swapchainImages = null!;
     private ImageView[] _swapchainImageViews = null!;
+    private Silk.NET.Vulkan.Semaphore[] _renderSemaphores = null!;
     private Format _swapchainImageFormat;
     private Extent2D _swapchainExtent;
     // Depth resources
@@ -29,11 +30,13 @@ public unsafe class Renderer : IDisposable {
     public Format DepthFormat => _depthFormat;
     private uint _imageIndex;
     private CommandBuffer _currentCmd;
+    private readonly AppSettings _settings;
     public GPUProfiler GPUProfiler { get; private set; }
 
-    public Renderer(VulkanContext ctx, IWindow window) {
+    public Renderer(VulkanContext ctx, IWindow window, AppSettings settings) {
         _ctx = ctx;
         _window = window;
+        _settings = settings;
         _window.Resize += OnResize;
         RecreateSwapchain();
         CreateFrameResources();
@@ -56,13 +59,24 @@ public unsafe class Renderer : IDisposable {
                 if (view.Handle != 0) _ctx.Vk.DestroyImageView(_ctx.Device, view, null);
             }
         }
+        if (_renderSemaphores != null) {
+            foreach (var sem in _renderSemaphores) {
+                if (sem.Handle != 0) _ctx.Vk.DestroySemaphore(_ctx.Device, sem, null);
+            }
+        }
         var oldSwapchain = _swapchain;
+
+        // FIFO is the standard VSync mode. 
+        // Mailbox is often called "Fast VSync" or "Triple Buffering" but it still allows the GPU to run faster than refresh 
+        // in some implementations or just drops frames. Strictly use FIFO for standard VSync.
+        var presentMode = _settings.VSync ? PresentModeKHR.FifoKhr : PresentModeKHR.ImmediateKhr;
+
         var builder = new SwapchainBuilder(
                 _ctx.Vk, _ctx.Device, _ctx.PhysicalDevice, _ctx.Surface, _ctx.KhrSurface,
                 _ctx.QueueFamilies)
             .WithExtent(_window.Size)
             .WithFormat(Format.B8G8R8A8Srgb)
-            .WithPresentMode(PresentModeKHR.MailboxKhr)
+            .WithPresentMode(presentMode)
             .WithImageCount(FrameOverlap);
         if (oldSwapchain.Handle != 0) {
             builder.WithOldSwapchain(oldSwapchain);
@@ -75,6 +89,13 @@ public unsafe class Renderer : IDisposable {
         _swapchainImageViews = builder.ImageViews;
         _swapchainImageFormat = builder.ImageFormat;
         _swapchainExtent = builder.Extent;
+
+        _renderSemaphores = new Silk.NET.Vulkan.Semaphore[_swapchainImages.Length];
+        var semaphoreInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
+        for (int i = 0; i < _renderSemaphores.Length; i++) {
+            _ctx.Vk.CreateSemaphore(_ctx.Device, &semaphoreInfo, null, out _renderSemaphores[i]);
+        }
+
         CreateDepthResources();
         builder.Dispose();
     }
@@ -146,7 +167,6 @@ public unsafe class Renderer : IDisposable {
             // Create Sync Objects
             _ctx.Vk.CreateFence(_ctx.Device, &fenceInfo, null, out _frames[i].RenderFence);
             _ctx.Vk.CreateSemaphore(_ctx.Device, &semaphoreInfo, null, out _frames[i].SwapchainSemaphore);
-            _ctx.Vk.CreateSemaphore(_ctx.Device, &semaphoreInfo, null, out _frames[i].RenderSemaphore);
             _frames[i].DeletionQueue = new List<Action>();
         }
     }
@@ -156,6 +176,7 @@ public unsafe class Renderer : IDisposable {
         _ctx.Vk.WaitForFences(_ctx.Device, 1, &fence, true, 1_000_000_000);
         
         GPUProfiler.BeginFrame(CurrentFrameIndex);
+        VulkanCommandProfiler.Reset();
 
         // 1. Process resources queued for deletion on THIS frame (now safe to delete)
         foreach (var action in CurrentFrame.DeletionQueue) {
@@ -242,7 +263,7 @@ public unsafe class Renderer : IDisposable {
         };
         var signalInfo = new SemaphoreSubmitInfo {
             SType = StructureType.SemaphoreSubmitInfo,
-            Semaphore = CurrentFrame.RenderSemaphore,
+            Semaphore = _renderSemaphores[_imageIndex],
             StageMask = PipelineStageFlags2.AllGraphicsBit
         };
         var submitInfo = new SubmitInfo2 {
@@ -256,7 +277,7 @@ public unsafe class Renderer : IDisposable {
         };
         _ctx.Vk.QueueSubmit2(_ctx.GraphicsQueue, 1, &submitInfo, CurrentFrame.RenderFence);
         var swapchain = _swapchain;
-        var renderSemaphore = CurrentFrame.RenderSemaphore;
+        var renderSemaphore = _renderSemaphores[_imageIndex];
         var imageIndex = _imageIndex;
         var presentInfo = new PresentInfoKHR {
             SType = StructureType.PresentInfoKhr,
@@ -298,7 +319,9 @@ public unsafe class Renderer : IDisposable {
         for (int i = 0; i < FrameOverlap; i++) {
             _ctx.Vk.DestroyFence(_ctx.Device, _frames[i].RenderFence, null);
             _ctx.Vk.DestroySemaphore(_ctx.Device, _frames[i].SwapchainSemaphore, null);
-            _ctx.Vk.DestroySemaphore(_ctx.Device, _frames[i].RenderSemaphore, null);
+        }
+        foreach (var sem in _renderSemaphores) {
+            _ctx.Vk.DestroySemaphore(_ctx.Device, sem, null);
         }
         foreach (var view in _swapchainImageViews) {
             _ctx.Vk.DestroyImageView(_ctx.Device, view, null);

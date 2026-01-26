@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Shiron.VulkanDumpster.Vulkan;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
@@ -11,8 +13,19 @@ public class YChunk : IDisposable {
     public const int TotalHeight = HeightInChunks * Chunk.Size;
     private readonly Chunk[] _chunks = new Chunk[HeightInChunks];
     private readonly Vector2D<int> _chunkPos; // X, Z position in chunk coordinates
+
+    private readonly Mesh _combinedMesh;
+    private readonly List<Vertex>[] _subChunkVertices = new List<Vertex>[HeightInChunks];
+    private readonly List<uint>[] _subChunkIndices = new List<uint>[HeightInChunks];
+    private readonly List<Vertex> _combinedVertices = new();
+    private readonly List<uint> _combinedIndices = new();
+    private bool _needsMeshRebuild;
+    private readonly World _world;
+
     public YChunk(VulkanContext ctx, World world, Vector2D<int> chunkPos) {
         _chunkPos = chunkPos;
+        _world = world;
+        _combinedMesh = new Mesh(ctx);
         for (int y = 0; y < HeightInChunks; y++) {
             var worldPos = new Vector3D<float>(chunkPos.X * Chunk.Size, y * Chunk.Size, chunkPos.Y * Chunk.Size);
             _chunks[y] = new Chunk(ctx, world, worldPos);
@@ -25,7 +38,7 @@ public class YChunk : IDisposable {
         _chunks[chunkY].SetBlock(x, localY, z, type);
     }
     
-    public void SetChunkBlocks(int chunkIndex, BlockType[] blocks) {
+    public unsafe void SetChunkBlocks(int chunkIndex, BlockType* blocks) {
         if (chunkIndex >= 0 && chunkIndex < HeightInChunks) {
             _chunks[chunkIndex].SetBlocks(blocks);
         }
@@ -43,24 +56,65 @@ public class YChunk : IDisposable {
         }
     }
     public void Update() {
-        // if (!_isDirty) return; // Optimization removed: Chunks need to poll for async task completion
         for (int i = 0; i < HeightInChunks; i++) {
             _chunks[i].Update();
-        }
-    }
-    
-    public void UploadPendingMeshes(BatchUploader uploader, ref int uploadedCount, int maxUploads) {
-        for (int i = 0; i < HeightInChunks; i++) {
-            if (uploadedCount >= maxUploads) return;
-            if (_chunks[i].HasPendingUpload) {
-                _chunks[i].UploadToGpu(uploader);
-                uploadedCount++;
+            if (_chunks[i].HasPendingMesh) {
+                var (v, ind) = _chunks[i].TakePendingMesh();
+                
+                if (_subChunkVertices[i] != null) {
+                    Chunk.RecycleLists(_subChunkVertices[i], _subChunkIndices[i]);
+                }
+
+                _subChunkVertices[i] = v;
+                _subChunkIndices[i] = ind;
+                _needsMeshRebuild = true;
             }
         }
     }
+    
+    public void UploadCombinedMesh(BatchUploader uploader, ChunkHeap heap, ref int uploadedCount, int maxUploads) {
+        if (!_needsMeshRebuild || uploadedCount >= maxUploads) return;
 
-    public void Render(VulkanCommandBuffer cmd, VulkanPipeline pipeline, DescriptorSet descriptorSet, Frustum frustum, ref int renderedCount) {
-        // 1. Cull the entire column first
+        _combinedVertices.Clear();
+        _combinedIndices.Clear();
+        uint vertexOffset = 0;
+
+        float xOffset = _chunkPos.X * Chunk.Size;
+        float zOffset = _chunkPos.Y * Chunk.Size;
+
+        for (int i = 0; i < HeightInChunks; i++) {
+            var verts = _subChunkVertices[i];
+            var inds = _subChunkIndices[i];
+            if (verts == null || verts.Count == 0) continue;
+
+            float yOffset = i * Chunk.Size;
+            int vCount = verts.Count;
+            for (int j = 0; j < vCount; j++) {
+                var v = verts[j];
+                var pos = v.Position;
+                pos.X += xOffset;
+                pos.Y += yOffset;
+                pos.Z += zOffset;
+                _combinedVertices.Add(new Vertex(pos, v.TexCoord, v.TexIndex));
+            }
+
+            int iCount = inds.Count;
+            for (int j = 0; j < iCount; j++) {
+                _combinedIndices.Add(inds[j] + vertexOffset);
+            }
+
+            vertexOffset += (uint) vCount;
+        }
+
+        _combinedMesh.Update(uploader, heap, CollectionsMarshal.AsSpan(_combinedVertices), CollectionsMarshal.AsSpan(_combinedIndices));
+        
+        _needsMeshRebuild = false;
+        uploadedCount++;
+    }
+
+    public void CollectIndirectCommands(List<DrawIndexedIndirectCommand> commands, Frustum frustum, ref int renderedCount) {
+        if (_combinedMesh.IndexCount == 0 || !_combinedMesh.HasAllocation) return;
+
         float minX = _chunkPos.X * Chunk.Size;
         float minZ = _chunkPos.Y * Chunk.Size;
         var colMin = new Vector3D<float>(minX, 0, minZ);
@@ -68,31 +122,30 @@ public class YChunk : IDisposable {
         
         if (!frustum.IsBoxVisible(colMin, colMax)) return;
 
-        var sizeVec = new Vector3D<float>(Chunk.Size, Chunk.Size, Chunk.Size);
-        for (int i = 0; i < HeightInChunks; i++) {
-            var chunk = _chunks[i];
-            if (chunk.Mesh.IndexCount == 0) continue;
-            
-            // Culling per sub-chunk
-            if (!frustum.IsBoxVisible(chunk.Position, chunk.Position + sizeVec)) continue;
+        commands.Add(new DrawIndexedIndirectCommand {
+            IndexCount = (uint)_combinedMesh.IndexCount,
+            InstanceCount = 1,
+            FirstIndex = (uint)(_combinedMesh.IndexOffset / sizeof(uint)),
+            VertexOffset = (int)(_combinedMesh.VertexOffset / (ulong)System.Runtime.CompilerServices.Unsafe.SizeOf<Vertex>()),
+            FirstInstance = 0
+        });
 
-            // Push the specific chunk position
-            var pc = new PushConstants {
-                Model = Matrix4X4.CreateTranslation(chunk.Position)
-            };
-            cmd.PushConstants(pipeline, ShaderStageFlags.VertexBit, pc);
-            chunk.Mesh.Bind(cmd);
-            cmd.DrawIndexed((uint) chunk.Mesh.IndexCount);
-            renderedCount++;
-        }
+        renderedCount++;
     }
+
+    public void Dispose(ChunkHeap heap) {
+        for (int i = 0; i < HeightInChunks; i++) {
+            if (_subChunkVertices[i] != null) {
+                Chunk.RecycleLists(_subChunkVertices[i], _subChunkIndices[i]);
+                _subChunkVertices[i] = null!;
+                _subChunkIndices[i] = null!;
+            }
+            _chunks[i]?.Dispose();
+        }
+        _combinedMesh.Free(heap);
+        _combinedMesh.Dispose();
+    }
+    
     public void Dispose() {
-        foreach (var chunk in _chunks) {
-            chunk.Mesh.Dispose();
-        }
-    }
-    // Matching the Program.cs PushConstants struct for internal usage
-    private struct PushConstants {
-        public Matrix4X4<float> Model;
     }
 }

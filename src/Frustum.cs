@@ -21,61 +21,34 @@ public struct Plane {
 public class Frustum {
     private readonly Plane[] _planes = new Plane[6];
 
-    public void Update(Matrix4X4<float> viewProj) {
+    public void Update(Matrix4X4<float> m) {
         // Left
-        _planes[0] = new Plane(
-            viewProj.M14 + viewProj.M11,
-            viewProj.M24 + viewProj.M21,
-            viewProj.M34 + viewProj.M31,
-            viewProj.M44 + viewProj.M41
-        );
+        _planes[0] = new Plane(m.M14 + m.M11, m.M24 + m.M21, m.M34 + m.M31, m.M44 + m.M41);
         // Right
-        _planes[1] = new Plane(
-            viewProj.M14 - viewProj.M11,
-            viewProj.M24 - viewProj.M21,
-            viewProj.M34 - viewProj.M31,
-            viewProj.M44 - viewProj.M41
-        );
+        _planes[1] = new Plane(m.M14 - m.M11, m.M24 - m.M21, m.M34 - m.M31, m.M44 - m.M41);
         // Bottom
-        _planes[2] = new Plane(
-            viewProj.M14 + viewProj.M12,
-            viewProj.M24 + viewProj.M22,
-            viewProj.M34 + viewProj.M32,
-            viewProj.M44 + viewProj.M42
-        );
+        _planes[2] = new Plane(m.M14 + m.M12, m.M24 + m.M22, m.M34 + m.M32, m.M44 + m.M42);
         // Top
-        _planes[3] = new Plane(
-            viewProj.M14 - viewProj.M12,
-            viewProj.M24 - viewProj.M22,
-            viewProj.M34 - viewProj.M32,
-            viewProj.M44 - viewProj.M42
-        );
-        // Near
-        _planes[4] = new Plane(
-            viewProj.M13,
-            viewProj.M23,
-            viewProj.M33,
-            viewProj.M43
-        );
+        _planes[3] = new Plane(m.M14 - m.M12, m.M24 - m.M22, m.M34 - m.M32, m.M44 - m.M42);
+        // Near (Vulkan: 0 <= z <= w)
+        _planes[4] = new Plane(m.M13, m.M23, m.M33, m.M43);
         // Far
-        _planes[5] = new Plane(
-            viewProj.M14 - viewProj.M13,
-            viewProj.M24 - viewProj.M23,
-            viewProj.M34 - viewProj.M33,
-            viewProj.M44 - viewProj.M43
-        );
+        _planes[5] = new Plane(m.M14 - m.M13, m.M24 - m.M23, m.M34 - m.M33, m.M44 - m.M43);
     }
 
     public bool IsBoxVisible(Vector3D<float> min, Vector3D<float> max) {
-        foreach (var plane in _planes) {
-            // Check if the positive vertex (in direction of normal) is outside (behind) the plane
-            var p = new Vector3D<float>(
-                plane.Normal.X > 0 ? max.X : min.X,
-                plane.Normal.Y > 0 ? max.Y : min.Y,
-                plane.Normal.Z > 0 ? max.Z : min.Z
-            );
+        for (int i = 0; i < 6; i++) {
+            var plane = _planes[i];
+            
+            // For each plane, find the vertex of the box that is "most inside" 
+            // the plane. If even this vertex is outside, the box is completely outside.
+            // Using the P-vertex logic for frustum culling.
+            
+            float px = plane.Normal.X >= 0 ? max.X : min.X;
+            float py = plane.Normal.Y >= 0 ? max.Y : min.Y;
+            float pz = plane.Normal.Z >= 0 ? max.Z : min.Z;
 
-            if (plane.GetSignedDistance(p) < 0) {
+            if (plane.GetSignedDistance(new Vector3D<float>(px, py, pz)) < 0) {
                 return false;
             }
         }

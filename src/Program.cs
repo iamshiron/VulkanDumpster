@@ -14,6 +14,7 @@ public class Program {
     private static IInputContext _input = null!;
     private static VulkanContext _context = null!;
     private static Renderer _renderer = null!;
+    private static AppSettings _settings = new();
     private static DescriptorSetManager _descriptorManager = null!;
     private static VulkanPipeline _trianglePipeline = null!;
     private static VulkanPipeline _wireframePipeline = null!;
@@ -28,14 +29,21 @@ public class Program {
     private static readonly Frustum _frustum = new();
     private static readonly HashSet<Key> _pressedKeys = new();
     private static Vector2 _lastMousePos;
-    private static bool _firstMouse = true;
-    private static double _elapsedTime;
-    private static int _frameCount;
-    private static double _fpsTimer;
-    private static bool _isWireframe = false;
-    private static bool _bKeyWasPressed = false;
+        private static bool _firstMouse = true;
+        private static double _elapsedTime;
+        private static int _frameCount;
+        private static double _fpsTimer;
+            private static bool _isWireframe = false;
+            private static bool _showUI = true;
+            private static bool _bKeyWasPressed = false;
+            private static bool _pKeyWasPressed = false;
+            private static bool _rKeyWasPressed = false;
+            private static bool _hKeyWasPressed = false;
+            private static readonly RingBuffer<float> _fpsRollingAverage = new(1000);
+            private static readonly RingBuffer<float> _deltaRollingAverage = new(1000);
+
     // Global UBO: Shared by everything
-    private struct GlobalUniforms {
+            private struct GlobalUniforms {
         public Matrix4X4<float> ViewProj;
     }
     public static void Main(string[] args) {
@@ -51,6 +59,8 @@ public class Program {
         var options = WindowOptions.DefaultVulkan;
         options.Title = "Vulkan Dumpster - Infinite World";
         options.Size = new Vector2D<int>(1920, 1080);
+        options.FramesPerSecond = _settings.MaxFPS;
+        options.UpdatesPerSecond = _settings.MaxFPS;
         _window = Window.Create(options);
         _window.Load += OnLoad;
         _window.Update += OnUpdate;
@@ -59,13 +69,13 @@ public class Program {
     }
     private unsafe void InitializeVulkan() {
         _context = new VulkanContext(_window);
-        _renderer = new Renderer(_context, _window);
+        _renderer = new Renderer(_context, _window, _settings);
         CreateDescriptorSetLayout();
         _descriptorManager = new DescriptorSetManager(_context.Vk, _context.Device, 3,
             new DescriptorPoolSize(DescriptorType.UniformBuffer, 3),
             new DescriptorPoolSize(DescriptorType.CombinedImageSampler, 3));
         CreateTextureArray();
-        _world = new World(_context, _renderer);
+        _world = new World(_context, _renderer, _settings);
         CreateUniformBuffers();
         CreatePipelines();
         _debugRenderer = new DebugRenderer(_context, _renderer, _descriptorSetLayout);
@@ -81,7 +91,7 @@ public class Program {
         };
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
         Console.WriteLine("  ✓ World System Initialized!");
-        Console.WriteLine("  • 16x16 Chunk Grid (512x512 blocks)");
+        Console.WriteLine($"  • {_settings.RenderDistance * 2}x{_settings.RenderDistance * 2} Chunk Grid ({_settings.RenderDistance * 2 * 32}x{_settings.RenderDistance * 2 * 32} blocks)");
         Console.WriteLine("  • Seamless terrain generation");
         Console.WriteLine("  • Press 'B' to toggle wireframe mode");
         Console.WriteLine("═══════════════════════════════════════════════════════════════");
@@ -157,7 +167,7 @@ public class Program {
                .SetColorAttachmentFormat(_renderer.SwapchainImageFormat)
                .SetDepthFormat(_renderer.DepthFormat);
         var pipeline = builder.Build(_context.Device);
-        _trianglePipeline = new VulkanPipeline(_context.Vk, _context.Device, pipeline, pipelineLayout); // Note: Layout ownership shared? Careful with dispose.
+        _trianglePipeline = new VulkanPipeline(_context.Vk, _context.Device, pipeline, pipelineLayout, "WorldSolid"); 
         // Wireframe pipeline
         builder.SetPolygonMode(PolygonMode.Line);
         var wfPipeline = builder.Build(_context.Device);
@@ -166,7 +176,7 @@ public class Program {
         // Ideally we'd clone the layout or reference count it, but for now we'll just not dispose it in the second one or create a new one.
         // Creating a new layout is safer for simple wrapper.
         _context.Vk.CreatePipelineLayout(_context.Device, &layoutInfo, null, out var wfPipelineLayout);
-        _wireframePipeline = new VulkanPipeline(_context.Vk, _context.Device, wfPipeline, wfPipelineLayout);
+        _wireframePipeline = new VulkanPipeline(_context.Vk, _context.Device, wfPipeline, wfPipelineLayout, "WorldWireframe");
 
         _context.Vk.DestroyShaderModule(_context.Device, vert, null);
         _context.Vk.DestroyShaderModule(_context.Device, frag, null);
@@ -176,9 +186,18 @@ public class Program {
         _elapsedTime += delta;
         _frameCount++;
         _fpsTimer += delta;
+        
+        _deltaRollingAverage.Add((float)delta);
+        float smoothedDelta = _deltaRollingAverage.Average;
+        _fpsRollingAverage.Add(smoothedDelta > 0 ? 1.0f / smoothedDelta : 0);
+        
         if (_fpsTimer >= 1.0) {
             _fpsTimer = 0;
             _frameCount = 0;
+        }
+
+        if (delta > 0.25) { // If frame takes more than 250ms, consider it 0 FPS for display
+             _fpsRollingAverage.Add(0);
         }
 
         Profiler.Begin("World Update");
@@ -208,7 +227,11 @@ public class Program {
         Profiler.Begin("World Render");
         var activePipeline = _isWireframe ? _wireframePipeline : _trianglePipeline;
         cmd.BindPipeline(activePipeline);
-        cmd.BindDescriptorSets(activePipeline, new[] { _descriptorSets[frameIndex] });
+        cmd.BindDescriptorSets(activePipeline, _descriptorSets[frameIndex]);
+        
+        // Push identity matrix for baked positions
+        cmd.PushConstants(activePipeline, ShaderStageFlags.VertexBit, Matrix4X4<float>.Identity);
+        
         _world.Render(cmd, activePipeline, _descriptorSets[frameIndex], _frustum);
         Profiler.End("World Render");
 
@@ -219,31 +242,88 @@ public class Program {
 
         // Draw Text
         Profiler.Begin("Text Render");
-        _textRenderer.Begin();
-        _textRenderer.DrawText($"FPS: {1.0/delta:F1}", 10, 30, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.DrawText($"Total Chunks: {_world.ChunkCount * YChunk.HeightInChunks}", 10, 55, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.DrawText($"Rendered: {_world.RenderedChunksCount}", 10, 80, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.DrawText($"Updates: {_world.LastFrameUpdates}", 10, 105, 1.0f, new Vector4(1, 1, 1, 1));
-        _textRenderer.DrawText($"Pos: {_camera.Position.X:F1}, {_camera.Position.Y:F1}, {_camera.Position.Z:F1}", 10, 130, 1.0f, new Vector4(1, 1, 1, 1));
+        if (_showUI) {
+            _textRenderer.Begin();
+            string fpsText = $"FPS: {_fpsRollingAverage.Average:F1} " +
+                             $"(Med: {_fpsRollingAverage.GetMedian():F1}, " +
+                             $"Min: {_fpsRollingAverage.GetMin():F1}, " +
+                             $"Max: {_fpsRollingAverage.GetMax():F1}, " +
+                             $"1%: {_fpsRollingAverage.GetPercentile(0.01f):F1}, " +
+                             $"0.1%: {_fpsRollingAverage.GetPercentile(0.001f):F1})";
+            _textRenderer.DrawText(fpsText, 10, 30, 1.0f, new Vector4(1, 1, 1, 1));
+
+            // Add Frame Time metrics (in ms)
+            double avgMs = _deltaRollingAverage.Average * 1000.0;
+            double jitterMs = _deltaRollingAverage.GetStandardDeviation() * 1000.0;
+            double maxMs = _deltaRollingAverage.GetMax() * 1000.0;
+            string ftText = $"Frame Time: {avgMs:F2}ms (Jitter: {jitterMs:F2}ms, Max: {maxMs:F2}ms)";
+            
+            // Color code based on stutter intensity
+            Vector4 ftColor = new Vector4(0.8f, 0.8f, 0.8f, 1);
+            if (jitterMs > avgMs * 0.15) ftColor = new Vector4(1, 1, 0, 1); // Warning: > 15% variance
+            if (jitterMs > avgMs * 0.50) ftColor = new Vector4(1, 0, 0, 1); // Critical: > 50% variance
+            
+            _textRenderer.DrawText(ftText, 10, 55, 0.9f, ftColor);
+
+                    _textRenderer.DrawText($"Total Chunks: {_world.ChunkCount * YChunk.HeightInChunks}", 10, 80, 1.0f, new Vector4(1, 1, 1, 1));
+                    _textRenderer.DrawText($"Rendered Chunks: {_world.RenderedChunksCount}", 10, 105, 1.0f, new Vector4(1, 1, 1, 1));
+                    _textRenderer.DrawText($"Regions (Rendered/Total): {_world.RenderedRegionsCount}/{_world.TotalRegionsCount}", 10, 130, 1.0f, new Vector4(0.4f, 1.0f, 0.4f, 1));
+                    _textRenderer.DrawText($"Updates: {_world.LastFrameUpdates}", 10, 155, 1.0f, new Vector4(1, 1, 1, 1));
+                    _textRenderer.DrawText($"Pos: {_camera.Position.X:F1}, {_camera.Position.Y:F1}, {_camera.Position.Z:F1}", 10, 180, 1.0f, new Vector4(1, 1, 1, 1));        _textRenderer.DrawText($"Render Distance: {_settings.RenderDistance}", 10, 205, 1.0f, new Vector4(1, 1, 1, 1));
+        _textRenderer.DrawText($"VSync: {_settings.VSync}", 10, 230, 1.0f, new Vector4(1, 1, 1, 1));
         
         // Display Profiler Results
-        int yOffset = 160;
+        int yOffset = 260;
         _textRenderer.DrawText("--- CPU Profiler ---", 10, yOffset, 0.8f, new Vector4(1, 0.8f, 0, 1));
-        yOffset += 20;
-        foreach (var (name, time) in Profiler.GetAverageResults()) {
-            _textRenderer.DrawText($"{name}: {time:F3} ms", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
             yOffset += 20;
-        }
+            Profiler.ForEachResult((name, avg, max) => {
+                _textRenderer.DrawText($"{name}: {avg:F3} ms (Max: {max:F2})", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+                yOffset += 20;
+            });
 
-        yOffset += 10;
-        _textRenderer.DrawText("--- GPU Profiler ---", 10, yOffset, 0.8f, new Vector4(0, 0.8f, 1, 1));
-        yOffset += 20;
-        foreach (var (name, time) in _renderer.GPUProfiler.GetLatestResults()) {
-            _textRenderer.DrawText($"{name}: {time:F3} ms", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 10;
+            _textRenderer.DrawText("--- GPU Profiler ---", 10, yOffset, 0.8f, new Vector4(0, 0.8f, 1, 1));
             yOffset += 20;
-        }
+            _renderer.GPUProfiler.ForEachLatestResult((name, time) => {
+                _textRenderer.DrawText($"{name}: {time:F3} ms", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+                yOffset += 20;
+            });
 
-        _textRenderer.Render(cmd, new Vector2D<int>((int)_renderer.SwapchainExtent.Width, (int)_renderer.SwapchainExtent.Height), new Vector4(1, 1, 1, 1));
+            yOffset += 10;
+            _textRenderer.DrawText("--- Vulkan Stats ---", 10, yOffset, 0.8f, new Vector4(1, 0.2f, 0.2f, 1));
+            yOffset += 20;
+            _textRenderer.DrawText($"Draw Calls: {VulkanCommandProfiler.DrawCalls}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 20;
+            _textRenderer.DrawText($"Pipeline Binds: {VulkanCommandProfiler.PipelineBinds}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText($"Desc Set Binds: {VulkanCommandProfiler.DescriptorSetBinds}", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 20;
+            _textRenderer.DrawText($"VB Binds: {VulkanCommandProfiler.VertexBufferBinds}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText($"IB Binds: {VulkanCommandProfiler.IndexBufferBinds}", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 20;
+            _textRenderer.DrawText($"Push Constants: {VulkanCommandProfiler.PushConstantsCount}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            
+            yOffset += 20;
+            _textRenderer.DrawText("--- Shader Executions ---", 10, yOffset, 0.8f, new Vector4(0.5f, 1f, 0.5f, 1));
+            yOffset += 20;
+            VulkanCommandProfiler.ForEachShaderExecution((name, count) => {
+                _textRenderer.DrawText($"{name}: {count}", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+                yOffset += 20;
+            });
+
+            yOffset += 10;
+            _textRenderer.DrawText("--- Memory & GC ---", 10, yOffset, 0.8f, new Vector4(0.2f, 0.6f, 1f, 1));
+            yOffset += 20;
+            var mem = MemoryProfiler.GetStats();
+            _textRenderer.DrawText($"Working Set: {mem.WorkingSetMB:F1} MB", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText($"Private: {mem.PrivateMemoryMB:F1} MB", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            yOffset += 20;
+            _textRenderer.DrawText($"Managed: {mem.ManagedMemoryMB:F1} MB", 20, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+            _textRenderer.DrawText($"GC G0/G1/G2: {mem.Gen0Collections}/{mem.Gen1Collections}/{mem.Gen2Collections}", 200, yOffset, 0.8f, new Vector4(0.8f, 0.8f, 0.8f, 1));
+
+            _renderer.GPUProfiler.BeginSection(cmd.Handle, "UI Pass");
+            _textRenderer.Render(cmd, new Vector2D<int>((int)_renderer.SwapchainExtent.Width, (int)_renderer.SwapchainExtent.Height), new Vector4(1, 1, 1, 1));
+            _renderer.GPUProfiler.EndSection(cmd.Handle, "UI Pass");
+        }
         Profiler.End("Text Render");
 
         Profiler.Begin("End Frame");
@@ -289,6 +369,43 @@ public class Program {
             _isWireframe = !_isWireframe;
         }
         _bKeyWasPressed = isBPressed;
+
+        bool isPPressed = _pressedKeys.Contains(Key.P);
+        if (isPPressed && !_pKeyWasPressed) {
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string fileName = $"profile_{timestamp}.json";
+            
+            var metadata = new Profiler.ProfileSnapshot.FrameMetadata {
+                DeltaTime = deltaTime,
+                AverageFPS = _fpsRollingAverage.Average,
+                MedianFPS = _fpsRollingAverage.GetMedian(),
+                MinFPS = _fpsRollingAverage.GetMin(),
+                MaxFPS = _fpsRollingAverage.GetMax(),
+                Low1PercentFPS = _fpsRollingAverage.GetPercentile(0.01f),
+                Low01PercentFPS = _fpsRollingAverage.GetPercentile(0.001f),
+                CameraPosition = (Vector3)_camera.Position,
+                TotalChunks = _world.ChunkCount * YChunk.HeightInChunks,
+                RenderedChunks = _world.RenderedChunksCount,
+                TotalRegions = _world.TotalRegionsCount,
+                RenderedRegions = _world.RenderedRegionsCount,
+                ChunkUpdates = _world.LastFrameUpdates
+            };
+
+            Profiler.SaveProfile(fileName, _renderer.GPUProfiler.GetLatestResults(), metadata);
+        }
+        _pKeyWasPressed = isPPressed;
+
+        bool isRPressed = _pressedKeys.Contains(Key.R);
+        if (isRPressed && !_rKeyWasPressed) {
+            Profiler.ResetMax();
+        }
+        _rKeyWasPressed = isRPressed;
+
+        bool isHPressed = _pressedKeys.Contains(Key.H);
+        if (isHPressed && !_hKeyWasPressed) {
+            _showUI = !_showUI;
+        }
+        _hKeyWasPressed = isHPressed;
     }
     private void OnMouseMove(IMouse mouse, Vector2 position) {
         if (mouse.Cursor.CursorMode != CursorMode.Raw) {
@@ -306,6 +423,8 @@ public class Program {
     }
     private unsafe void Cleanup() {
         _context.Vk.DeviceWaitIdle(_context.Device);
+        _fpsRollingAverage.Dispose();
+        _deltaRollingAverage.Dispose();
         _textRenderer?.Dispose();
         _debugRenderer.Dispose();
         _trianglePipeline?.Dispose();

@@ -6,11 +6,14 @@ public unsafe class VulkanPipeline : IDisposable {
     private readonly Device _device;
     public Pipeline Handle { get; private set; }
     public PipelineLayout Layout { get; private set; }
-    public VulkanPipeline(Vk vk, Device device, Pipeline handle, PipelineLayout layout) {
+    public string Name { get; set; } = "Unknown";
+
+    public VulkanPipeline(Vk vk, Device device, Pipeline handle, PipelineLayout layout, string name = "Unknown") {
         _vk = vk;
         _device = device;
         Handle = handle;
         Layout = layout;
+        Name = name;
     }
     public void Dispose() {
         if (Handle.Handle != 0) {

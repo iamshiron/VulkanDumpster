@@ -64,53 +64,60 @@ public unsafe class VulkanBuffer : IDisposable {
         }
         throw new Exception("failed to find suitable memory type!");
     }
-    /// <summary>
-    /// Uploads data to the buffer.
-    /// If the buffer is host-visible, it maps and copies directly.
-    /// If the buffer is device-local, it uses a staging buffer (requires a command pool and queue).
-    /// </summary>
-    public void UploadData<T>(ReadOnlySpan<T> data, CommandPool commandPool, Queue queue, VulkanContext ctx) where T : unmanaged {
-        ulong dataSize = (ulong) (sizeof(T) * data.Length);
-        if (MappedData != null) {
-            // Host visible - direct copy
-            data.CopyTo(new Span<T>(MappedData, data.Length));
-        } else {
-            // Device local - use staging buffer
-            var stagingBuffer = new VulkanBuffer(_vk, _device, _physicalDevice, dataSize,
-                BufferUsageFlags.TransferSrcBit,
-                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-            stagingBuffer.UploadData(data, commandPool, queue, ctx);
-            CopyBuffer(stagingBuffer.Handle, Handle, dataSize, commandPool, queue, ctx);
-            // Defer disposal until GPU is done (approx 3 frames)
-            ctx.EnqueueDispose(() => stagingBuffer.Dispose());
+        /// <summary>
+        /// Uploads data to the buffer.
+        /// If the buffer is host-visible, it maps and copies directly.
+        /// If the buffer is device-local, it uses a staging buffer (requires a command pool and queue).
+        /// </summary>
+        public void UploadData<T>(ReadOnlySpan<T> data, ulong dstOffset, CommandPool commandPool, Queue queue, VulkanContext ctx) where T : unmanaged {
+            ulong dataSize = (ulong) (sizeof(T) * data.Length);
+            if (MappedData != null) {
+                // Host visible - direct copy
+                byte* ptr = (byte*)MappedData + dstOffset;
+                data.CopyTo(new Span<T>(ptr, data.Length));
+            } else {
+                // Device local - use staging buffer
+                var stagingBuffer = new VulkanBuffer(_vk, _device, _physicalDevice, dataSize,
+                    BufferUsageFlags.TransferSrcBit,
+                    MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
+                stagingBuffer.UploadData(data, 0, commandPool, queue, ctx);
+                CopyBuffer(stagingBuffer.Handle, Handle, 0, dstOffset, dataSize, commandPool, queue, ctx);
+                // Defer disposal until GPU is done (approx 3 frames)
+                ctx.EnqueueDispose(() => stagingBuffer.Dispose());
+            }
         }
-    }
-    private void CopyBuffer(Buffer srcBuffer, Buffer dstBuffer, ulong size, CommandPool commandPool, Queue queue, VulkanContext ctx) {
-        var allocInfo = new CommandBufferAllocateInfo {
-            SType = StructureType.CommandBufferAllocateInfo,
-            Level = CommandBufferLevel.Primary,
-            CommandPool = commandPool,
-            CommandBufferCount = 1
-        };
-        _vk.AllocateCommandBuffers(_device, &allocInfo, out var commandBuffer);
-        var beginInfo = new CommandBufferBeginInfo {
-            SType = StructureType.CommandBufferBeginInfo,
-            Flags = CommandBufferUsageFlags.OneTimeSubmitBit
-        };
-        _vk.BeginCommandBuffer(commandBuffer, &beginInfo);
-        var copyRegion = new BufferCopy {
-            SrcOffset = 0,
-            DstOffset = 0,
-            Size = size
-        };
-        _vk.CmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
-        _vk.EndCommandBuffer(commandBuffer);
-        var submitInfo = new SubmitInfo {
-            SType = StructureType.SubmitInfo,
-            CommandBufferCount = 1,
-            PCommandBuffers = &commandBuffer
-        };
-        _vk.QueueSubmit(queue, 1, &submitInfo, default);
+    
+        private void CopyBuffer(Buffer srcBuffer, Buffer dstBuffer, ulong srcOffset, ulong dstOffset, ulong size, CommandPool commandPool, Queue queue, VulkanContext ctx) {
+            var allocInfo = new CommandBufferAllocateInfo {
+                SType = StructureType.CommandBufferAllocateInfo,
+                Level = CommandBufferLevel.Primary,
+                CommandPool = commandPool,
+                CommandBufferCount = 1
+            };
+            _vk.AllocateCommandBuffers(_device, &allocInfo, out var commandBuffer);
+    
+            var beginInfo = new CommandBufferBeginInfo {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.OneTimeSubmitBit
+            };
+            _vk.BeginCommandBuffer(commandBuffer, &beginInfo);
+    
+            var copyRegion = new BufferCopy {
+                SrcOffset = srcOffset,
+                DstOffset = dstOffset,
+                Size = size
+            };
+            _vk.CmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+    
+            _vk.EndCommandBuffer(commandBuffer);
+    
+            var submitInfo = new SubmitInfo {
+                SType = StructureType.SubmitInfo,
+                CommandBufferCount = 1,
+                PCommandBuffers = &commandBuffer
+            };
+            _vk.QueueSubmit(queue, 1, &submitInfo, default);
+    
         // Defer freeing the command buffer
         var cmdBuffers = new[] { commandBuffer };
         ctx.EnqueueDispose(() => {
